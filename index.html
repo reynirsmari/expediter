@@ -13,13 +13,43 @@
   <meta name="apple-mobile-web-app-title" content="Expediter" />
   <meta name="mobile-web-app-capable" content="yes" />
 
-  <meta name="theme-color" content="#0a0a0b" />
+  <meta name="theme-color" content="#161616" />
+  <meta name="theme-color" content="#161616" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+
+  <!-- Apply saved theme immediately to prevent flash of wrong theme on load -->
+  <script>
+    (function() {
+      try {
+        var saved = window.localStorage && window.localStorage.getItem('expediter:theme');
+        document.documentElement.setAttribute('data-theme', saved === 'light' ? 'light' : 'dark');
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
 
   <style>
+    :root, :root[data-theme="dark"] {
+      --bg: #161616;
+      --layer-01: #262626;
+      --text-primary: #f4f4f4;
+      --text-muted: #6f6f6f;
+      --interactive: #0f62fe;
+      --danger: #da1e28;
+    }
+    :root[data-theme="light"] {
+      --bg: #ffffff;
+      --layer-01: #f4f4f4;
+      --text-primary: #161616;
+      --text-muted: #8d8d8d;
+      --interactive: #0f62fe;
+      --danger: #da1e28;
+    }
     html, body {
       margin: 0;
       padding: 0;
-      background: #0a0a0b;
+      background: var(--bg);
       overscroll-behavior: none;
       -webkit-tap-highlight-color: transparent;
       -webkit-touch-callout: none;
@@ -27,6 +57,15 @@
       user-select: none;
       touch-action: manipulation;
       overflow-x: hidden;
+      font-family: 'IBM Plex Sans', sans-serif;
+    }
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+    /* Carbon-style focus ring: 2px solid blue 60, no offset */
+    *:focus-visible {
+      outline: 2px solid var(--interactive);
+      outline-offset: -2px;
     }
     /* Allow text selection in text inputs */
     input, textarea {
@@ -40,60 +79,120 @@
       position: fixed;
       inset: 0;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
-      color: #6b7280;
-      font-family: monospace;
+      color: var(--text-muted);
+      font-family: 'IBM Plex Mono', monospace;
       font-size: 12px;
-      letter-spacing: 0.2em;
+      letter-spacing: 0.16em;
       text-transform: uppercase;
-      background: #0a0a0b;
+      background: var(--bg);
       z-index: 9999;
+      padding: 20px;
+      text-align: center;
     }
     #boot-loader.hidden {
       display: none;
+    }
+    #boot-error {
+      margin-top: 20px;
+      max-width: 90vw;
+      color: var(--danger);
+      font-size: 11px;
+      text-transform: none;
+      letter-spacing: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      text-align: left;
+      background: var(--layer-01);
+      padding: 12px;
+      border-left: 3px solid var(--danger);
+      display: none;
+    }
+    #boot-error.visible {
+      display: block;
     }
   </style>
 </head>
 <body>
   <div id="root"></div>
-  <div id="boot-loader">Hleður...</div>
+  <div id="boot-loader">
+    <div>Hleður...</div>
+    <div id="boot-error"></div>
+  </div>
+
+  <!-- Global error handler — must be first so it catches script load errors -->
+  <script>
+    function showBootError(msg) {
+      var el = document.getElementById('boot-error');
+      if (el) {
+        el.textContent = String(msg);
+        el.classList.add('visible');
+      }
+    }
+    window.addEventListener('error', function(e) {
+      showBootError('Villa: ' + (e.message || e.error || 'Óþekkt') +
+        (e.filename ? '\n' + e.filename + ':' + e.lineno : ''));
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      showBootError('Promise villa: ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
+    });
+  </script>
 
   <script src="react.min.js"></script>
   <script src="react-dom.min.js"></script>
   <script src="babel.min.js"></script>
 
+  <!-- Sanity check: confirm libraries loaded -->
+  <script>
+    if (typeof React === 'undefined') showBootError('React.min.js hlaðst ekki — vantar skrá í möppu?');
+    else if (typeof ReactDOM === 'undefined') showBootError('react-dom.min.js hlaðst ekki');
+    else if (typeof Babel === 'undefined') showBootError('babel.min.js hlaðst ekki — er hún í sömu möppu og index.html?');
+  </script>
+
   <!-- Wake lock + gesture blocking + boot hide -->
   <script>
-    // Prevent pinch-zoom and double-tap zoom on iOS Safari
-    document.addEventListener('gesturestart', (e) => e.preventDefault());
-    document.addEventListener('gesturechange', (e) => e.preventDefault());
-    document.addEventListener('gestureend', (e) => e.preventDefault());
+    try {
+      // Prevent pinch-zoom and double-tap zoom on iOS Safari
+      document.addEventListener('gesturestart', function(e) { e.preventDefault(); });
+      document.addEventListener('gesturechange', function(e) { e.preventDefault(); });
+      document.addEventListener('gestureend', function(e) { e.preventDefault(); });
 
-    let lastTouch = 0;
-    document.addEventListener('touchend', (e) => {
-      const now = Date.now();
-      if (now - lastTouch <= 300) e.preventDefault();
-      lastTouch = now;
-    }, { passive: false });
+      var lastTouch = 0;
+      document.addEventListener('touchend', function(e) {
+        var now = Date.now();
+        if (now - lastTouch <= 300) e.preventDefault();
+        lastTouch = now;
+      }, { passive: false });
+    } catch (e) { /* ignore */ }
 
-    // Try to keep screen awake
-    let wakeLock = null;
-    async function requestWakeLock() {
+    // Try to keep screen awake — wrapped extra-defensively for iOS file://
+    var wakeLock = null;
+    function requestWakeLock() {
       try {
-        if ('wakeLock' in navigator) {
-          wakeLock = await navigator.wakeLock.request('screen');
-          wakeLock.addEventListener('release', () => { wakeLock = null; });
+        if (typeof navigator !== 'undefined' && navigator && 'wakeLock' in navigator) {
+          var p = navigator.wakeLock.request('screen');
+          if (p && typeof p.then === 'function') {
+            p.then(function(lock) {
+              wakeLock = lock;
+              if (lock && typeof lock.addEventListener === 'function') {
+                lock.addEventListener('release', function() { wakeLock = null; });
+              }
+            }).catch(function() { /* iOS may reject */ });
+          }
         }
-      } catch (e) { /* ignore */ }
+      } catch (e) { /* older browser or file:// blocked it */ }
     }
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && !wakeLock) requestWakeLock();
-    });
-    requestWakeLock();
+    try {
+      document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible' && !wakeLock) requestWakeLock();
+      });
+      requestWakeLock();
+    } catch (e) { /* ignore */ }
 
     function hideBootLoader() {
-      const el = document.getElementById('boot-loader');
+      var el = document.getElementById('boot-loader');
       if (el) el.classList.add('hidden');
     }
   </script>
@@ -105,9 +204,9 @@ const { useState, useEffect, useRef } = React;
 const DEFAULT_TOTAL = 110;
 
 const COURSES = [
-  { id: "starter", name: "FORRÉTTUR", accent: "#ffb547" },
-  { id: "main", name: "AÐALRÉTTUR", accent: "#ff5a3c" },
-  { id: "dessert", name: "EFTIRRÉTTUR", accent: "#c084fc" },
+  { id: "starter", name: "FORRÉTTUR", accent: "var(--course-starter)" },
+  { id: "main", name: "AÐALRÉTTUR", accent: "var(--course-main)" },
+  { id: "dessert", name: "EFTIRRÉTTUR", accent: "var(--course-dessert)" },
 ];
 
 const INCREMENTS = [1, 2, 4, 6, 8, 10];
@@ -543,11 +642,11 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
   };
 
   // Status color logic for the timer
-  let timerTone = "#6b7280";
+  let timerTone = "var(--text-muted)";
   if (sinceLastCall != null) {
-    if (sinceLastCall > 8 * 60 * 1000) timerTone = "#ef4444";
-    else if (sinceLastCall > 4 * 60 * 1000) timerTone = "#f59e0b";
-    else timerTone = "#10b981";
+    if (sinceLastCall > 8 * 60 * 1000) timerTone = "var(--danger)";
+    else if (sinceLastCall > 4 * 60 * 1000) timerTone = "var(--alert)";
+    else timerTone = "var(--success)";
   }
 
   return (
@@ -792,6 +891,13 @@ function ExpediterCounter() {
   const [total, setTotal] = useState(DEFAULT_TOTAL);
   const [openCount, setOpenCount] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [theme, setTheme] = useState(() => {
+    if (typeof window !== "undefined" && window.localStorage) {
+      const saved = window.localStorage.getItem("expediter:theme");
+      if (saved === "light" || saved === "dark") return saved;
+    }
+    return "dark";
+  });
   const [customInput, setCustomInput] = useState(null);
   // customInput shape: { title, placeholder, max?, onSubmit }
   const [resumePrompt, setResumePrompt] = useState(null);
@@ -952,6 +1058,21 @@ function ExpediterCounter() {
     setConfirmResetAll(false);
   };
 
+  // Apply theme to <html> element and persist
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-theme", theme);
+      // Update mobile browser chrome color
+      const meta = document.querySelector('meta[name="theme-color"]:not([media])');
+      if (meta) meta.setAttribute('content', theme === 'dark' ? '#161616' : '#ffffff');
+    }
+    if (typeof window !== "undefined" && window.localStorage) {
+      try {
+        window.localStorage.setItem("expediter:theme", theme);
+      } catch (e) { /* ignore */ }
+    }
+  }, [theme]);
+
   // Aggregate
   const sumSent = (s) =>
     (s.sentActions || []).reduce((a, x) => a + x.count, 0);
@@ -962,18 +1083,56 @@ function ExpediterCounter() {
   return (
     <div className="app">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700;800&family=Bebas+Neue&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap');
+
+        :root, :root[data-theme="dark"] {
+          --bg: #161616;
+          --layer-01: #262626;
+          --layer-02: #393939;
+          --border-strong: #525252;
+          --text-muted: #6f6f6f;
+          --text-secondary: #a8a8a8;
+          --text-primary: #f4f4f4;
+          --interactive: #0f62fe;
+          --interactive-hover: #4589ff;
+          --danger: #da1e28;
+          --danger-hover: #a2191f;
+          --success: #24a148;
+          --alert: #f1c21b;
+          --shadow: rgba(0, 0, 0, 0.75);
+          --course-starter: #4589ff;
+          --course-main: #33b1ff;
+          --course-dessert: #08bdba;
+        }
+        :root[data-theme="light"] {
+          --bg: #ffffff;
+          --layer-01: #f4f4f4;
+          --layer-02: #e0e0e0;
+          --border-strong: #c6c6c6;
+          --text-muted: #8d8d8d;
+          --text-secondary: #525252;
+          --text-primary: #161616;
+          --interactive: #0f62fe;
+          --interactive-hover: #0043ce;
+          --danger: #da1e28;
+          --danger-hover: #750e13;
+          --success: #198038;
+          --alert: #b28600;
+          --shadow: rgba(22, 22, 22, 0.65);
+          --course-starter: #0043ce;
+          --course-main: #00539a;
+          --course-dessert: #005d5d;
+        }
+500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap');
 
         * { box-sizing: border-box; }
 
         .app {
           min-height: 100vh;
-          background: #0a0a0b;
-          background-image:
-            radial-gradient(circle at 20% 0%, rgba(255, 90, 60, 0.08) 0%, transparent 50%),
-            radial-gradient(circle at 80% 100%, rgba(255, 181, 71, 0.06) 0%, transparent 50%);
-          color: #f5f5f5;
-          font-family: 'JetBrains Mono', monospace;
+          background: var(--bg);
+          background-image: none;
+          color: var(--text-primary);
+          font-family: 'IBM Plex Mono', monospace;
           padding: 20px;
           padding-bottom: 40px;
         }
@@ -984,7 +1143,7 @@ function ExpediterCounter() {
           align-items: center;
           margin-bottom: 24px;
           padding-bottom: 20px;
-          border-bottom: 2px solid #1f1f23;
+          border-bottom: 2px solid var(--layer-02);
           gap: 16px;
           flex-wrap: wrap;
         }
@@ -998,8 +1157,8 @@ function ExpediterCounter() {
         .event-input {
           background: transparent;
           border: none;
-          color: #f5f5f5;
-          font-family: 'Bebas Neue', sans-serif;
+          color: var(--text-primary);
+          font-family: 'IBM Plex Sans Condensed', 'IBM Plex Sans', sans-serif;
           font-size: 32px;
           letter-spacing: 0.08em;
           padding: 0;
@@ -1007,13 +1166,13 @@ function ExpediterCounter() {
           min-width: 280px;
         }
         .event-input:focus {
-          border-bottom: 2px solid #ffb547;
+          border-bottom: 2px solid var(--interactive);
         }
 
         .header-sub {
           font-size: 11px;
           letter-spacing: 0.2em;
-          color: #6b7280;
+          color: var(--text-muted);
           text-transform: uppercase;
         }
 
@@ -1027,7 +1186,7 @@ function ExpediterCounter() {
           text-align: right;
         }
         .grand-total-num {
-          font-family: 'Bebas Neue', sans-serif;
+          font-family: 'IBM Plex Sans Condensed', 'IBM Plex Sans', sans-serif;
           font-size: 40px;
           line-height: 1;
           letter-spacing: 0.04em;
@@ -1035,16 +1194,16 @@ function ExpediterCounter() {
         .grand-total-label {
           font-size: 10px;
           letter-spacing: 0.2em;
-          color: #6b7280;
+          color: var(--text-muted);
           text-transform: uppercase;
           margin-top: 2px;
         }
 
         .reset-all {
           background: transparent;
-          border: 1px solid #3f3f46;
-          color: #9ca3af;
-          font-family: 'JetBrains Mono', monospace;
+          border: 1px solid var(--border-strong);
+          color: var(--text-secondary);
+          font-family: 'IBM Plex Mono', monospace;
           font-size: 11px;
           letter-spacing: 0.15em;
           padding: 10px 16px;
@@ -1054,8 +1213,8 @@ function ExpediterCounter() {
           transition: all 0.15s;
         }
         .reset-all:hover {
-          border-color: #ef4444;
-          color: #ef4444;
+          border-color: var(--danger);
+          color: var(--danger);
         }
 
         .grid {
@@ -1065,8 +1224,8 @@ function ExpediterCounter() {
         }
 
         .card {
-          background: #131316;
-          border: 1px solid #27272a;
+          background: var(--layer-01);
+          border: 1px solid var(--layer-02);
           border-top: 4px solid var(--accent);
           padding: 20px;
           display: flex;
@@ -1080,13 +1239,13 @@ function ExpediterCounter() {
           align-items: center;
         }
         .course-name {
-          font-family: 'Bebas Neue', sans-serif;
+          font-family: 'IBM Plex Sans Condensed', 'IBM Plex Sans', sans-serif;
           font-size: 28px;
           letter-spacing: 0.1em;
           color: var(--accent);
         }
         .timer-pill {
-          font-family: 'JetBrains Mono', monospace;
+          font-family: 'IBM Plex Mono', monospace;
           font-size: 13px;
           font-weight: 700;
           padding: 4px 10px;
@@ -1115,23 +1274,23 @@ function ExpediterCounter() {
           padding: 8px 0;
         }
         .remaining-num {
-          font-family: 'Bebas Neue', sans-serif;
+          font-family: 'IBM Plex Sans Condensed', 'IBM Plex Sans', sans-serif;
           font-size: 88px;
           line-height: 0.85;
-          color: #fafafa;
+          color: var(--text-primary);
           letter-spacing: -0.02em;
         }
         .remaining-label {
           font-size: 11px;
           letter-spacing: 0.2em;
-          color: #6b7280;
+          color: var(--text-muted);
           text-transform: uppercase;
         }
 
         .progress-track {
           position: relative;
           height: 8px;
-          background: #1f1f23;
+          background: var(--layer-02);
           overflow: hidden;
         }
         .progress-sent {
@@ -1164,8 +1323,8 @@ function ExpediterCounter() {
           grid-template-columns: repeat(3, 1fr);
           gap: 8px;
           padding: 12px;
-          background: #0a0a0b;
-          border: 1px solid #1f1f23;
+          background: var(--bg);
+          border: 1px solid var(--layer-02);
         }
         .stat {
           text-align: center;
@@ -1173,12 +1332,12 @@ function ExpediterCounter() {
         .stat-label {
           font-size: 9px;
           letter-spacing: 0.2em;
-          color: #6b7280;
+          color: var(--text-muted);
           text-transform: uppercase;
           margin-bottom: 4px;
         }
         .stat-value {
-          font-family: 'Bebas Neue', sans-serif;
+          font-family: 'IBM Plex Sans Condensed', 'IBM Plex Sans', sans-serif;
           font-size: 32px;
           line-height: 1;
         }
@@ -1191,7 +1350,7 @@ function ExpediterCounter() {
         .stage-label {
           font-size: 10px;
           letter-spacing: 0.2em;
-          color: #9ca3af;
+          color: var(--text-secondary);
           text-transform: uppercase;
           font-weight: 700;
           display: flex;
@@ -1200,7 +1359,7 @@ function ExpediterCounter() {
         }
         .pending-badge {
           background: var(--accent);
-          color: #0a0a0b;
+          color: var(--bg);
           padding: 2px 8px;
           font-size: 10px;
           font-weight: 800;
@@ -1214,22 +1373,25 @@ function ExpediterCounter() {
         }
 
         .btn {
-          font-family: 'JetBrains Mono', monospace;
+          font-family: 'IBM Plex Mono', monospace;
           font-weight: 800;
           font-size: 14px;
           padding: 12px 14px;
-          border: 1px solid #27272a;
-          background: #1a1a1f;
-          color: #fafafa;
+          border: 1px solid var(--layer-02);
+          background: var(--layer-01);
+          color: var(--text-primary);
           cursor: pointer;
           letter-spacing: 0.05em;
           transition: all 0.1s;
           flex: 1;
           min-width: 52px;
           text-transform: uppercase;
+          -webkit-appearance: none;
+          appearance: none;
+          border-radius: 0;
         }
         .btn:hover:not(:disabled) {
-          background: #27272a;
+          background: var(--layer-02);
           transform: translateY(-1px);
         }
         .btn:active:not(:disabled) {
@@ -1248,7 +1410,7 @@ function ExpediterCounter() {
         .btn-sub {
           flex: 0 0 auto;
           background: transparent;
-          color: #9ca3af;
+          color: var(--text-secondary);
         }
 
         .btn-call {
@@ -1256,7 +1418,7 @@ function ExpediterCounter() {
           padding: 16px;
           font-size: 16px;
           background: var(--accent);
-          color: #0a0a0b;
+          color: var(--bg);
           border-color: var(--accent);
           font-weight: 800;
           letter-spacing: 0.1em;
@@ -1266,17 +1428,17 @@ function ExpediterCounter() {
           transform: translateY(-2px);
         }
         .btn-call:disabled {
-          background: #1a1a1f;
-          color: #4b5563;
-          border-color: #27272a;
+          background: var(--layer-01);
+          color: var(--border-strong);
+          border-color: var(--layer-02);
         }
 
         .btn-send {
-          background: #1a1a1f;
+          background: var(--layer-01);
         }
         .btn-send:hover:not(:disabled) {
           background: var(--accent);
-          color: #0a0a0b;
+          color: var(--bg);
           border-color: var(--accent);
         }
         .btn-send-all {
@@ -1287,7 +1449,7 @@ function ExpediterCounter() {
         }
         .btn-send-all:hover:not(:disabled) {
           background: var(--accent);
-          color: #0a0a0b;
+          color: var(--bg);
         }
 
         .footer-row {
@@ -1295,19 +1457,19 @@ function ExpediterCounter() {
           gap: 8px;
           justify-content: space-between;
           padding-top: 8px;
-          border-top: 1px solid #1f1f23;
+          border-top: 1px solid var(--layer-02);
         }
         .btn-ghost {
           flex: 1;
           background: transparent;
-          color: #9ca3af;
+          color: var(--text-secondary);
           font-size: 11px;
         }
         .btn-reset {
           flex: 0 0 auto;
           background: transparent;
-          color: #6b7280;
-          border-color: #3f3f46;
+          color: var(--text-muted);
+          border-color: var(--border-strong);
           font-size: 11px;
           padding: 12px 18px;
         }
@@ -1315,8 +1477,8 @@ function ExpediterCounter() {
           flex: 1;
         }
         .btn-reset:hover {
-          color: #ef4444;
-          border-color: #ef4444;
+          color: var(--danger);
+          border-color: var(--danger);
         }
 
         @media (max-width: 768px) {
@@ -1328,7 +1490,7 @@ function ExpediterCounter() {
         .modal-backdrop {
           position: fixed;
           inset: 0;
-          background: rgba(0, 0, 0, 0.75);
+          background: var(--shadow);
           backdrop-filter: blur(4px);
           display: flex;
           align-items: center;
@@ -1341,28 +1503,29 @@ function ExpediterCounter() {
           to { opacity: 1; }
         }
         .modal {
-          background: #131316;
-          border: 1px solid #27272a;
-          border-top: 4px solid #ef4444;
+          background: var(--layer-01);
+          border: 1px solid var(--layer-02);
+          border-top: 4px solid var(--danger);
           padding: 28px;
           max-width: 440px;
           width: calc(100% - 40px);
           animation: slideUp 0.2s ease-out;
+          box-sizing: border-box;
         }
         @keyframes slideUp {
           from { transform: translateY(12px); opacity: 0; }
           to { transform: translateY(0); opacity: 1; }
         }
         .modal-title {
-          font-family: 'Bebas Neue', sans-serif;
+          font-family: 'IBM Plex Sans Condensed', 'IBM Plex Sans', sans-serif;
           font-size: 26px;
           letter-spacing: 0.08em;
-          color: #fafafa;
+          color: var(--text-primary);
           margin-bottom: 12px;
         }
         .modal-message {
           font-size: 13px;
-          color: #9ca3af;
+          color: var(--text-secondary);
           line-height: 1.6;
           margin-bottom: 24px;
         }
@@ -1377,28 +1540,41 @@ function ExpediterCounter() {
           font-size: 12px;
         }
         .modal-btn-danger {
-          background: #ef4444;
-          border-color: #ef4444;
-          color: #0a0a0b;
+          background: var(--danger) !important;
+          border-color: var(--danger) !important;
+          color: #ffffff !important;
+          -webkit-appearance: none;
+          appearance: none;
         }
-        .modal-btn-danger:hover {
-          background: #dc2626;
-          border-color: #dc2626;
+        .modal-btn-danger:hover:not(:disabled),
+        .modal-btn-danger:active:not(:disabled),
+        .modal-btn-danger:focus:not(:disabled) {
+          background: var(--danger-hover) !important;
+          border-color: var(--danger-hover) !important;
+          color: #ffffff !important;
         }
         .modal-btn-primary {
-          background: #ffb547;
-          border-color: #ffb547;
-          color: #0a0a0b;
+          background: var(--interactive) !important;
+          border-color: var(--interactive) !important;
+          color: #ffffff !important;
+          -webkit-appearance: none;
+          appearance: none;
         }
-        .modal-btn-primary:hover:not(:disabled) {
-          background: #ffc56a;
-          border-color: #ffc56a;
+        .modal-btn-primary:hover:not(:disabled),
+        .modal-btn-primary:active:not(:disabled),
+        .modal-btn-primary:focus:not(:disabled) {
+          background: var(--interactive-hover) !important;
+          border-color: var(--interactive-hover) !important;
+          color: #ffffff !important;
+        }
+        .modal-btn-primary:disabled {
+          opacity: 0.3;
         }
 
         .icon-btn {
           background: transparent;
-          border: 1px solid #3f3f46;
-          color: #9ca3af;
+          border: 1px solid var(--border-strong);
+          color: var(--text-secondary);
           width: 40px;
           height: 40px;
           display: inline-flex;
@@ -1408,13 +1584,13 @@ function ExpediterCounter() {
           transition: all 0.15s;
         }
         .icon-btn:hover {
-          color: #ffb547;
-          border-color: #ffb547;
+          color: var(--interactive);
+          border-color: var(--interactive);
           transform: rotate(45deg);
         }
 
         .modal-settings {
-          border-top-color: #ffb547;
+          border-top-color: var(--interactive);
           max-width: 480px;
         }
         .settings-section {
@@ -1424,7 +1600,7 @@ function ExpediterCounter() {
           display: block;
           font-size: 10px;
           letter-spacing: 0.2em;
-          color: #9ca3af;
+          color: var(--text-secondary);
           text-transform: uppercase;
           font-weight: 700;
           margin-bottom: 10px;
@@ -1435,22 +1611,22 @@ function ExpediterCounter() {
           gap: 8px;
         }
         .toggle-btn {
-          background: #0a0a0b;
-          border: 1px solid #27272a;
-          color: #9ca3af;
+          background: var(--bg);
+          border: 1px solid var(--layer-02);
+          color: var(--text-secondary);
           padding: 14px 12px;
           cursor: pointer;
           text-align: left;
           transition: all 0.15s;
-          font-family: 'JetBrains Mono', monospace;
+          font-family: 'IBM Plex Mono', monospace;
         }
         .toggle-btn:hover {
-          border-color: #3f3f46;
+          border-color: var(--border-strong);
         }
         .toggle-active {
-          border-color: #ffb547 !important;
-          background: rgba(255, 181, 71, 0.08);
-          color: #fafafa;
+          border-color: var(--interactive) !important;
+          background: rgba(15, 98, 254, 0.10);
+          color: var(--text-primary);
         }
         .toggle-title {
           font-weight: 800;
@@ -1460,11 +1636,11 @@ function ExpediterCounter() {
         }
         .toggle-desc {
           font-size: 10px;
-          color: #6b7280;
+          color: var(--text-muted);
           line-height: 1.4;
         }
         .toggle-active .toggle-desc {
-          color: #9ca3af;
+          color: var(--text-secondary);
         }
 
         .number-row {
@@ -1474,12 +1650,12 @@ function ExpediterCounter() {
           margin-bottom: 10px;
         }
         .num-btn {
-          background: #1a1a1f;
-          border: 1px solid #27272a;
-          color: #fafafa;
+          background: var(--layer-01);
+          border: 1px solid var(--layer-02);
+          color: var(--text-primary);
           padding: 12px 10px;
           cursor: pointer;
-          font-family: 'JetBrains Mono', monospace;
+          font-family: 'IBM Plex Mono', monospace;
           font-weight: 700;
           font-size: 12px;
           flex: 0 0 auto;
@@ -1487,24 +1663,29 @@ function ExpediterCounter() {
           transition: all 0.1s;
         }
         .num-btn:hover {
-          border-color: #ffb547;
-          color: #ffb547;
+          border-color: var(--interactive);
+          color: var(--interactive);
         }
         .num-input {
           flex: 1;
-          background: #0a0a0b;
-          border: 1px solid #27272a;
-          color: #fafafa;
-          font-family: 'Bebas Neue', sans-serif;
+          background: var(--bg);
+          border: 1px solid var(--layer-02);
+          color: var(--text-primary);
+          font-family: 'IBM Plex Sans Condensed', 'IBM Plex Sans', sans-serif;
           font-size: 28px;
           letter-spacing: 0.05em;
           padding: 4px 12px;
           text-align: center;
           outline: none;
           min-width: 0;
+          box-sizing: border-box;
+          -webkit-appearance: none;
+          appearance: none;
+          border-radius: 0;
+          max-width: 100%;
         }
         .num-input:focus {
-          border-color: #ffb547;
+          border-color: var(--interactive);
         }
         .num-input::-webkit-inner-spin-button,
         .num-input::-webkit-outer-spin-button {
@@ -1520,32 +1701,32 @@ function ExpediterCounter() {
           flex: 1;
           min-width: 50px;
           background: transparent;
-          border: 1px solid #27272a;
-          color: #9ca3af;
+          border: 1px solid var(--layer-02);
+          color: var(--text-secondary);
           padding: 8px 6px;
           cursor: pointer;
-          font-family: 'JetBrains Mono', monospace;
+          font-family: 'IBM Plex Mono', monospace;
           font-weight: 700;
           font-size: 12px;
           transition: all 0.1s;
         }
         .preset-btn:hover {
-          border-color: #ffb547;
-          color: #ffb547;
+          border-color: var(--interactive);
+          color: var(--interactive);
         }
         .preset-active {
-          border-color: #ffb547 !important;
-          color: #ffb547 !important;
-          background: rgba(255, 181, 71, 0.08);
+          border-color: var(--interactive) !important;
+          color: var(--interactive) !important;
+          background: rgba(15, 98, 254, 0.10);
         }
 
         .settings-note {
           font-size: 11px;
-          color: #6b7280;
+          color: var(--text-muted);
           line-height: 1.5;
           padding: 10px 12px;
-          background: #0a0a0b;
-          border-left: 2px solid #3f3f46;
+          background: var(--bg);
+          border-left: 2px solid var(--border-strong);
           margin-bottom: 20px;
         }
 
@@ -1561,7 +1742,7 @@ function ExpediterCounter() {
           min-width: 0;
           background: transparent;
           border-style: dashed;
-          color: #9ca3af;
+          color: var(--text-secondary);
         }
         .btn-add.btn-custom:hover:not(:disabled) {
           border-style: solid;
@@ -1572,7 +1753,7 @@ function ExpediterCounter() {
         .btn-send.btn-custom:hover:not(:disabled) {
           border-style: solid;
           background: var(--accent);
-          color: #0a0a0b;
+          color: var(--bg);
           border-color: var(--accent);
         }
 
@@ -1605,11 +1786,11 @@ function ExpediterCounter() {
           text-transform: uppercase;
           font-weight: 700;
           cursor: pointer;
-          font-family: 'JetBrains Mono', monospace;
+          font-family: 'IBM Plex Mono', monospace;
           transition: all 0.15s;
         }
         .btn-call-all:hover {
-          background: rgba(255, 181, 71, 0.1);
+          background: rgba(15, 98, 254, 0.10);
           border-style: solid;
         }
 
@@ -1617,15 +1798,15 @@ function ExpediterCounter() {
           width: 100%;
           margin-top: 6px;
           background: transparent;
-          border: 1px solid #3f3f46;
-          color: #9ca3af;
+          border: 1px solid var(--border-strong);
+          color: var(--text-secondary);
           padding: 8px;
           font-size: 11px;
           letter-spacing: 0.1em;
           text-transform: uppercase;
           font-weight: 700;
           cursor: pointer;
-          font-family: 'JetBrains Mono', monospace;
+          font-family: 'IBM Plex Mono', monospace;
           transition: all 0.15s;
         }
         .btn-uncall:hover:not(:disabled) {
@@ -1638,28 +1819,29 @@ function ExpediterCounter() {
         }
 
         .modal-numinput {
-          border-top-color: #ffb547;
+          border-top-color: var(--interactive);
           max-width: 380px;
         }
         .num-input-large {
           width: 100%;
-          font-size: 48px;
+          font-size: 36px;
           padding: 14px 16px;
           margin-bottom: 12px;
           height: auto;
+          box-sizing: border-box;
         }
 
         .modal-resume {
-          border-top-color: #10b981;
+          border-top-color: var(--success);
           max-width: 460px;
         }
         .modal-resume strong {
-          color: #fafafa;
+          color: var(--text-primary);
           font-weight: 700;
         }
         .resume-summary {
-          background: #0a0a0b;
-          border: 1px solid #1f1f23;
+          background: var(--bg);
+          border: 1px solid var(--layer-02);
           padding: 4px 0;
           margin-bottom: 22px;
         }
@@ -1668,48 +1850,48 @@ function ExpediterCounter() {
           justify-content: space-between;
           align-items: center;
           padding: 12px 14px;
-          border-left: 3px solid var(--accent, #3f3f46);
+          border-left: 3px solid var(--accent, var(--border-strong));
         }
         .resume-row + .resume-row {
-          border-top: 1px solid #1f1f23;
+          border-top: 1px solid var(--layer-02);
         }
         .resume-row-name {
-          font-family: 'Bebas Neue', sans-serif;
+          font-family: 'IBM Plex Sans Condensed', 'IBM Plex Sans', sans-serif;
           font-size: 16px;
           letter-spacing: 0.1em;
-          color: var(--accent, #fafafa);
+          color: var(--accent, var(--text-primary));
         }
         .resume-row-stat {
           display: flex;
           align-items: baseline;
           gap: 6px;
-          font-family: 'JetBrains Mono', monospace;
+          font-family: 'IBM Plex Mono', monospace;
           font-size: 12px;
         }
         .resume-num {
-          font-family: 'Bebas Neue', sans-serif;
+          font-family: 'IBM Plex Sans Condensed', 'IBM Plex Sans', sans-serif;
           font-size: 22px;
-          color: #fafafa;
+          color: var(--text-primary);
           letter-spacing: 0.05em;
         }
         .resume-num-muted {
-          color: #6b7280;
+          color: var(--text-muted);
         }
         .resume-sep {
           font-size: 9px;
           letter-spacing: 0.18em;
           text-transform: uppercase;
-          color: #6b7280;
+          color: var(--text-muted);
           margin-right: 4px;
         }
         .modal-btn-discard {
           background: transparent;
-          border-color: #3f3f46;
-          color: #9ca3af;
+          border-color: var(--border-strong);
+          color: var(--text-secondary);
         }
         .modal-btn-discard:hover {
-          border-color: #ef4444;
-          color: #ef4444;
+          border-color: var(--danger);
+          color: var(--danger);
         }
       `}</style>
 
@@ -1729,11 +1911,28 @@ function ExpediterCounter() {
             <div className="grand-total-num">
               {totalSent}
               {!openCount && (
-                <span style={{ color: "#3f3f46" }}> / {totalExpected}</span>
+                <span style={{ color: "var(--border-strong)" }}> / {totalExpected}</span>
               )}
             </div>
             <div className="grand-total-label">Total Sent</div>
           </div>
+          <button
+            className="icon-btn"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            title={theme === "dark" ? "Skipta í ljóst þema" : "Skipta í dökkt þema"}
+            aria-label="Skipta þema"
+          >
+            {theme === "dark" ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+              </svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            )}
+          </button>
           <button className="icon-btn" onClick={() => setSettingsOpen(true)} title="Stillingar">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="3" />
