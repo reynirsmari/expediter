@@ -1,0 +1,1826 @@
+<!DOCTYPE html>
+<html lang="is">
+<head>
+  <meta charset="UTF-8" />
+  <title>Expediter Counter</title>
+
+  <!-- Lock viewport, no zoom, no double-tap zoom -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+
+  <!-- iOS standalone behavior when added to home screen -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Expediter" />
+  <meta name="mobile-web-app-capable" content="yes" />
+
+  <meta name="theme-color" content="#0a0a0b" />
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #0a0a0b;
+      overscroll-behavior: none;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: manipulation;
+      overflow-x: hidden;
+    }
+    /* Allow text selection in text inputs */
+    input, textarea {
+      -webkit-user-select: text;
+      user-select: text;
+    }
+    #root {
+      min-height: 100vh;
+    }
+    #boot-loader {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #6b7280;
+      font-family: monospace;
+      font-size: 12px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      background: #0a0a0b;
+      z-index: 9999;
+    }
+    #boot-loader.hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <div id="boot-loader">Hleður...</div>
+
+  <script src="react.min.js"></script>
+  <script src="react-dom.min.js"></script>
+  <script src="babel.min.js"></script>
+
+  <!-- Wake lock + gesture blocking + boot hide -->
+  <script>
+    // Prevent pinch-zoom and double-tap zoom on iOS Safari
+    document.addEventListener('gesturestart', (e) => e.preventDefault());
+    document.addEventListener('gesturechange', (e) => e.preventDefault());
+    document.addEventListener('gestureend', (e) => e.preventDefault());
+
+    let lastTouch = 0;
+    document.addEventListener('touchend', (e) => {
+      const now = Date.now();
+      if (now - lastTouch <= 300) e.preventDefault();
+      lastTouch = now;
+    }, { passive: false });
+
+    // Try to keep screen awake
+    let wakeLock = null;
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+          wakeLock.addEventListener('release', () => { wakeLock = null; });
+        }
+      } catch (e) { /* ignore */ }
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && !wakeLock) requestWakeLock();
+    });
+    requestWakeLock();
+
+    function hideBootLoader() {
+      const el = document.getElementById('boot-loader');
+      if (el) el.classList.add('hidden');
+    }
+  </script>
+
+  <!-- App code: JSX inlined to avoid file:// CORS issues -->
+  <script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+const DEFAULT_TOTAL = 110;
+
+const COURSES = [
+  { id: "starter", name: "FORRÉTTUR", accent: "#ffb547" },
+  { id: "main", name: "AÐALRÉTTUR", accent: "#ff5a3c" },
+  { id: "dessert", name: "EFTIRRÉTTUR", accent: "#c084fc" },
+];
+
+const INCREMENTS = [1, 2, 4, 6, 8, 10];
+
+function formatElapsed(ms) {
+  if (ms == null) return "--:--";
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function ResumeDialog({ open, eventName, savedAt, summary, courses, onResume, onDiscard }) {
+  if (!open) return null;
+
+  const formatSavedAt = (ts) => {
+    if (!ts) return "óþekktur tími";
+    const d = new Date(ts);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const time = d.toLocaleTimeString("is-IS", { hour: "2-digit", minute: "2-digit" });
+    if (sameDay) return `í dag kl. ${time}`;
+    const yest = new Date(now);
+    yest.setDate(yest.getDate() - 1);
+    if (d.toDateString() === yest.toDateString()) return `í gær kl. ${time}`;
+    const date = d.toLocaleDateString("is-IS", { day: "numeric", month: "short" });
+    return `${date} kl. ${time}`;
+  };
+
+  const courseByKey = Object.fromEntries(courses.map((c) => [c.id, c]));
+
+  return (
+    <div className="modal-backdrop" style={{ pointerEvents: "auto" }}>
+      <div className="modal modal-resume" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-title">Óklárað kvöld?</div>
+        <div className="modal-message">
+          Vistuð talning fannst fyrir <strong>{eventName}</strong> frá {formatSavedAt(savedAt)}.
+        </div>
+        <div className="resume-summary">
+          {summary.map((s) => {
+            const c = courseByKey[s.key];
+            return (
+              <div key={s.key} className="resume-row" style={{ "--accent": c?.accent }}>
+                <div className="resume-row-name">{c?.name || s.key}</div>
+                <div className="resume-row-stat">
+                  <span className="resume-num">{s.sent}</span>
+                  <span className="resume-sep">sent</span>
+                  <span className="resume-num resume-num-muted">{s.tickets}</span>
+                  <span className="resume-sep">miðar</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="modal-actions">
+          <button className="btn modal-btn modal-btn-discard" onClick={onDiscard}>
+            Byrja upp á nýtt
+          </button>
+          <button className="btn modal-btn modal-btn-primary" onClick={onResume}>
+            Halda áfram
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NumberInputDialog({ open, title, placeholder, max, onSubmit, onCancel }) {
+  const [value, setValue] = useState("");
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (open) {
+      setValue("");
+      // Focus input after render
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [open]);
+
+  if (!open) return null;
+
+  const parsed = parseInt(value, 10);
+  const isValid =
+    Number.isFinite(parsed) &&
+    parsed > 0 &&
+    parsed <= 999 &&
+    (max == null || parsed <= max);
+
+  const submit = () => {
+    if (!isValid) return;
+    onSubmit(parsed);
+  };
+
+  const handleKey = (e) => {
+    if (e.key === "Enter") submit();
+    if (e.key === "Escape") onCancel();
+  };
+
+  const quickPicks = [9, 10, 12, 15, 20, 25].filter((n) => max == null || n <= max);
+
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal modal-numinput" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-title">{title}</div>
+        {max != null && (
+          <div className="modal-message">Hámark: {max}</div>
+        )}
+        <input
+          ref={inputRef}
+          type="number"
+          inputMode="numeric"
+          className="num-input num-input-large"
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKey}
+          min={1}
+          max={max ?? 999}
+        />
+        {quickPicks.length > 0 && (
+          <div className="presets-row">
+            {quickPicks.map((n) => (
+              <button
+                key={n}
+                className="preset-btn"
+                onClick={() => setValue(String(n))}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="modal-actions">
+          <button className="btn btn-ghost modal-btn" onClick={onCancel}>
+            Hætta við
+          </button>
+          <button
+            className="btn modal-btn modal-btn-primary"
+            onClick={submit}
+            disabled={!isValid}
+          >
+            Staðfesta
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsDialog({ open, currentTotal, currentOpenCount, onSave, onCancel }) {
+  const [draftTotal, setDraftTotal] = useState(String(currentTotal));
+  const [draftOpen, setDraftOpen] = useState(currentOpenCount);
+
+  useEffect(() => {
+    if (open) {
+      setDraftTotal(String(currentTotal));
+      setDraftOpen(currentOpenCount);
+    }
+  }, [open, currentTotal, currentOpenCount]);
+
+  if (!open) return null;
+
+  const parsed = parseInt(draftTotal, 10);
+  const isValid = draftOpen || (Number.isFinite(parsed) && parsed > 0 && parsed <= 9999);
+
+  const handleSave = () => {
+    if (!isValid) return;
+    onSave(draftOpen ? 0 : parsed, draftOpen);
+  };
+
+  const bumpTotal = (delta) => {
+    const cur = Number.isFinite(parsed) ? parsed : 0;
+    const next = Math.max(1, Math.min(9999, cur + delta));
+    setDraftTotal(String(next));
+  };
+
+  const presets = [50, 80, 110, 150, 200, 300];
+
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal modal-settings" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-title">Stillingar</div>
+
+        <div className="settings-section">
+          <label className="settings-label">Talningar-mátur</label>
+          <div className="toggle-row">
+            <button
+              className={`toggle-btn ${!draftOpen ? "toggle-active" : ""}`}
+              onClick={() => setDraftOpen(false)}
+            >
+              <div className="toggle-title">Þak (cap)</div>
+              <div className="toggle-desc">Veit fyrirfram hvað margir gestir</div>
+            </button>
+            <button
+              className={`toggle-btn ${draftOpen ? "toggle-active" : ""}`}
+              onClick={() => setDraftOpen(true)}
+            >
+              <div className="toggle-title">Opin talning</div>
+              <div className="toggle-desc">Telur upp á við án þaks</div>
+            </button>
+          </div>
+        </div>
+
+        {!draftOpen && (
+          <div className="settings-section">
+            <label className="settings-label">Heildarfjöldi gesta</label>
+            <div className="number-row">
+              <button className="num-btn" onClick={() => bumpTotal(-10)}>−10</button>
+              <button className="num-btn" onClick={() => bumpTotal(-1)}>−1</button>
+              <input
+                type="number"
+                className="num-input"
+                value={draftTotal}
+                onChange={(e) => setDraftTotal(e.target.value)}
+                min={1}
+                max={9999}
+              />
+              <button className="num-btn" onClick={() => bumpTotal(1)}>+1</button>
+              <button className="num-btn" onClick={() => bumpTotal(10)}>+10</button>
+            </div>
+            <div className="presets-row">
+              {presets.map((p) => (
+                <button
+                  key={p}
+                  className={`preset-btn ${parsed === p ? "preset-active" : ""}`}
+                  onClick={() => setDraftTotal(String(p))}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="settings-note">
+          Stillingin gildir fyrir alla þrjá rétti. Núverandi talningar eru ekki núllstilltar.
+        </div>
+
+        <div className="modal-actions">
+          <button className="btn btn-ghost modal-btn" onClick={onCancel}>
+            Hætta við
+          </button>
+          <button
+            className="btn modal-btn modal-btn-primary"
+            onClick={handleSave}
+            disabled={!isValid}
+          >
+            Vista
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmDialog({ open, title, message, onConfirm, onCancel }) {
+  if (!open) return null;
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-title">{title}</div>
+        <div className="modal-message">{message}</div>
+        <div className="modal-actions">
+          <button className="btn btn-ghost modal-btn" onClick={onCancel}>
+            Hætta við
+          </button>
+          <button className="btn modal-btn modal-btn-danger" onClick={onConfirm}>
+            Núllstilla
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CourseCard({ course, state, onChange, total, openCount, onCustomInput }) {
+  // batches: [{ id, count, addedAt, calledAt|null }]
+  // sentActions: [{ id, count, at }] — each "mark sent" press is a separate entry, undoable like calls
+  const batches = state.batches || [];
+  const sentActions = state.sentActions || [];
+  const callStartedAt = state.callStartedAt || null;
+  const lastCallAt = state.lastCallAt || null;
+
+  const tickets = batches.reduce((a, b) => a + b.count, 0);
+  const called = batches
+    .filter((b) => b.calledAt != null)
+    .reduce((a, b) => a + b.count, 0);
+  const pendingBatches = batches.filter((b) => b.calledAt == null);
+  const sent = sentActions.reduce((a, s) => a + s.count, 0);
+  const remaining = openCount ? null : Math.max(0, total - sent);
+  const pendingSend = called - sent;
+
+  // Live timer for "since last call"
+  const [now, setNow] = useState(Date.now());
+  const [confirmReset, setConfirmReset] = useState(false);
+  useEffect(() => {
+    if (!lastCallAt) return;
+    const i = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(i);
+  }, [lastCallAt]);
+
+  const sinceLastCall = lastCallAt ? now - lastCallAt : null;
+
+  const addBatch = (count) => {
+    if (count <= 0) return;
+    const newBatch = {
+      id: `b_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      count,
+      addedAt: Date.now(),
+      calledAt: null,
+    };
+    onChange({ ...state, batches: [...batches, newBatch] });
+  };
+
+  const removeLastUncalled = () => {
+    // Remove most recently added uncalled batch, or shrink it by 1
+    const lastUncalledIdx = [...batches]
+      .map((b, i) => ({ b, i }))
+      .reverse()
+      .find(({ b }) => b.calledAt == null)?.i;
+    if (lastUncalledIdx == null) return;
+    const batch = batches[lastUncalledIdx];
+    let next;
+    if (batch.count <= 1) {
+      next = batches.filter((_, i) => i !== lastUncalledIdx);
+    } else {
+      next = batches.map((b, i) =>
+        i === lastUncalledIdx ? { ...b, count: b.count - 1 } : b
+      );
+    }
+    onChange({ ...state, batches: next });
+  };
+
+  const callBatch = (batchId) => {
+    const t = Date.now();
+    const next = batches.map((b) =>
+      b.id === batchId && b.calledAt == null ? { ...b, calledAt: t } : b
+    );
+    onChange({
+      ...state,
+      batches: next,
+      callStartedAt: callStartedAt ?? t,
+      lastCallAt: t,
+    });
+  };
+
+  const callAllPending = () => {
+    if (pendingBatches.length === 0) return;
+    const t = Date.now();
+    const next = batches.map((b) =>
+      b.calledAt == null ? { ...b, calledAt: t } : b
+    );
+    onChange({
+      ...state,
+      batches: next,
+      callStartedAt: callStartedAt ?? t,
+      lastCallAt: t,
+    });
+  };
+
+  // Undo last call: find the most recently called batch and put it back to pending.
+  // Disabled if pendingSend < the most recently called batch's count
+  // (would create inconsistency where sent > called).
+  const calledBatches = batches.filter((b) => b.calledAt != null);
+  const lastCalledBatch = calledBatches.length
+    ? calledBatches.reduce((a, b) => (a.calledAt > b.calledAt ? a : b))
+    : null;
+  const canUncall =
+    lastCalledBatch != null && pendingSend >= lastCalledBatch.count;
+
+  const uncallLast = () => {
+    if (!canUncall) return;
+    const next = batches.map((b) =>
+      b.id === lastCalledBatch.id ? { ...b, calledAt: null } : b
+    );
+    // Recompute lastCallAt from remaining called batches
+    const stillCalled = next.filter((b) => b.calledAt != null);
+    const newLastCallAt = stillCalled.length
+      ? Math.max(...stillCalled.map((b) => b.calledAt))
+      : null;
+    const newCallStartedAt = stillCalled.length ? callStartedAt : null;
+    onChange({
+      ...state,
+      batches: next,
+      lastCallAt: newLastCallAt,
+      callStartedAt: newCallStartedAt,
+    });
+  };
+
+  const markSent = (n) => {
+    if (pendingSend <= 0) return;
+    const toSend = Math.min(n, pendingSend);
+    const action = {
+      id: `s_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      count: toSend,
+      at: Date.now(),
+    };
+    onChange({ ...state, sentActions: [...sentActions, action] });
+  };
+
+  const sendAll = () => {
+    if (pendingSend <= 0) return;
+    const action = {
+      id: `s_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      count: pendingSend,
+      at: Date.now(),
+    };
+    onChange({ ...state, sentActions: [...sentActions, action] });
+  };
+
+  // Undo last sent action — symmetric with uncallLast
+  const lastSentAction = sentActions.length
+    ? sentActions[sentActions.length - 1]
+    : null;
+  const canUndoSent = lastSentAction != null;
+
+  const undoLastSent = () => {
+    if (!canUndoSent) return;
+    onChange({
+      ...state,
+      sentActions: sentActions.slice(0, -1),
+    });
+  };
+
+  const reset = () => {
+    onChange({
+      batches: [],
+      sentActions: [],
+      callStartedAt: null,
+      lastCallAt: null,
+    });
+    setConfirmReset(false);
+  };
+
+  // Status color logic for the timer
+  let timerTone = "#6b7280";
+  if (sinceLastCall != null) {
+    if (sinceLastCall > 8 * 60 * 1000) timerTone = "#ef4444";
+    else if (sinceLastCall > 4 * 60 * 1000) timerTone = "#f59e0b";
+    else timerTone = "#10b981";
+  }
+
+  return (
+    <div
+      className="card"
+      style={{
+        "--accent": course.accent,
+      }}
+    >
+      <div className="card-header">
+        <div className="course-name">{course.name}</div>
+        <div
+          className="timer-pill"
+          style={{ color: timerTone, borderColor: timerTone }}
+          title="Tími síðan síðast kallað"
+        >
+          <span className="timer-dot" style={{ background: timerTone }} />
+          {formatElapsed(sinceLastCall)}
+        </div>
+      </div>
+
+      {/* Big number — remaining (capped) or sent (open) */}
+      <div className="remaining-block">
+        <div className="remaining-num">{openCount ? sent : remaining}</div>
+        <div className="remaining-label">
+          {openCount ? "sent út" : `eftir af ${total}`}
+        </div>
+      </div>
+
+      {/* Progress bar — only when capped */}
+      {!openCount && (
+      <div className="progress-track">
+        <div
+          className="progress-sent"
+          style={{ width: `${total > 0 ? (sent / total) * 100 : 0}%` }}
+        />
+        <div
+          className="progress-called"
+          style={{
+            left: `${total > 0 ? (sent / total) * 100 : 0}%`,
+            width: `${total > 0 ? ((called - sent) / total) * 100 : 0}%`,
+          }}
+        />
+        <div
+          className="progress-tickets"
+          style={{
+            left: `${total > 0 ? (called / total) * 100 : 0}%`,
+            width: `${total > 0 ? ((tickets - called) / total) * 100 : 0}%`,
+          }}
+        />
+      </div>
+      )}
+
+      {/* Three counters */}
+      <div className="stats">
+        <div className="stat">
+          <div className="stat-label">Tickets in</div>
+          <div className="stat-value">{tickets}</div>
+        </div>
+        <div className="stat">
+          <div className="stat-label">Called</div>
+          <div className="stat-value">{called}</div>
+        </div>
+        <div className="stat">
+          <div className="stat-label">Sent</div>
+          <div className="stat-value">{sent}</div>
+        </div>
+      </div>
+
+      {/* STAGE 1 — Tickets in */}
+      <div className="stage">
+        <div className="stage-label">1. Miðar inn</div>
+        <div className="btn-row btn-row-wrap">
+          {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+            <button
+              key={n}
+              className="btn btn-add btn-num"
+              onClick={() => addBatch(n)}
+            >
+              +{n}
+            </button>
+          ))}
+          <button
+            className="btn btn-add btn-custom"
+            onClick={() =>
+              onCustomInput({
+                title: `${course.name} — Miðar inn`,
+                placeholder: "Fjöldi miða",
+                onSubmit: (n) => addBatch(n),
+              })
+            }
+          >
+            +N
+          </button>
+          <button
+            className="btn btn-sub"
+            onClick={removeLastUncalled}
+            disabled={pendingBatches.length === 0}
+            title="Bakka síðasta ókallaða batch um 1"
+          >
+            −1
+          </button>
+        </div>
+      </div>
+
+      {/* STAGE 2 — Call individual batches */}
+      <div className="stage">
+        <div className="stage-label">
+          2. Kalla í eldhús
+          {pendingBatches.length > 0 && (
+            <span className="pending-badge">{pendingBatches.length} pant.</span>
+          )}
+        </div>
+        {pendingBatches.length === 0 ? (
+          <button className="btn btn-call" disabled>
+            Ekkert að kalla
+          </button>
+        ) : (
+          <>
+            <div className="batch-row">
+              {pendingBatches.map((b) => (
+                <button
+                  key={b.id}
+                  className="btn btn-call btn-call-batch"
+                  onClick={() => callBatch(b.id)}
+                  title={`Bætt við ${new Date(b.addedAt).toLocaleTimeString("is-IS", { hour: "2-digit", minute: "2-digit" })}`}
+                >
+                  Kalla {b.count}
+                </button>
+              ))}
+            </div>
+            {pendingBatches.length > 1 && (
+              <button
+                className="btn btn-call-all"
+                onClick={callAllPending}
+              >
+                Kalla allt ({pendingBatches.reduce((a, b) => a + b.count, 0)})
+              </button>
+            )}
+          </>
+        )}
+        {lastCalledBatch != null && (
+          <button
+            className="btn btn-uncall"
+            onClick={uncallLast}
+            disabled={!canUncall}
+            title={
+              canUncall
+                ? `Bakka síðasta kalli (${lastCalledBatch.count})`
+                : `Get ekki bakkað — bakka þarf sent fyrst (${lastCalledBatch.count - pendingSend} af ${lastCalledBatch.count} eru sent)`
+            }
+          >
+            ↶ Bakka kall {lastCalledBatch.count}
+          </button>
+        )}
+      </div>
+
+      {/* STAGE 3 — Send */}
+      <div className="stage">
+        <div className="stage-label">
+          3. Merkja sent {pendingSend > 0 && <span className="pending-badge">{pendingSend} bíða</span>}
+        </div>
+        <div className="btn-row btn-row-wrap">
+          {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+            <button
+              key={n}
+              className="btn btn-send btn-num"
+              onClick={() => markSent(n)}
+              disabled={pendingSend <= 0}
+            >
+              +{n}
+            </button>
+          ))}
+          <button
+            className="btn btn-send btn-custom"
+            onClick={() =>
+              onCustomInput({
+                title: `${course.name} — Merkja sent`,
+                placeholder: "Fjöldi diska",
+                max: pendingSend,
+                onSubmit: (n) => markSent(n),
+              })
+            }
+            disabled={pendingSend <= 0}
+          >
+            +N
+          </button>
+          <button
+            className="btn btn-send-all"
+            onClick={sendAll}
+            disabled={pendingSend <= 0}
+          >
+            Allt ({pendingSend})
+          </button>
+        </div>
+        {lastSentAction != null && (
+          <button
+            className="btn btn-uncall"
+            onClick={undoLastSent}
+            title={`Bakka síðasta sent (${lastSentAction.count})`}
+          >
+            ↶ Bakka sent {lastSentAction.count}
+          </button>
+        )}
+      </div>
+
+      {/* Footer actions */}
+      <div className="footer-row">
+        <button className="btn btn-reset btn-reset-full" onClick={() => setConfirmReset(true)}>
+          RESET
+        </button>
+      </div>
+
+      <ConfirmDialog
+        open={confirmReset}
+        title={`Núllstilla ${course.name}?`}
+        message="Þetta hreinsar tickets, called, sent og tímamæli fyrir þennan rétt."
+        onConfirm={reset}
+        onCancel={() => setConfirmReset(false)}
+      />
+    </div>
+  );
+}
+
+function ExpediterCounter() {
+  const initial = () => ({
+    batches: [],
+    sentActions: [],
+    callStartedAt: null,
+    lastCallAt: null,
+  });
+
+  // Try to restore from window.storage if available
+  const [states, setStates] = useState({
+    starter: initial(),
+    main: initial(),
+    dessert: initial(),
+  });
+  const [eventName, setEventName] = useState("RON SERVICE COUNTER");
+  const [loaded, setLoaded] = useState(false);
+  const [confirmResetAll, setConfirmResetAll] = useState(false);
+  const [total, setTotal] = useState(DEFAULT_TOTAL);
+  const [openCount, setOpenCount] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [customInput, setCustomInput] = useState(null);
+  // customInput shape: { title, placeholder, max?, onSubmit }
+  const [resumePrompt, setResumePrompt] = useState(null);
+  // resumePrompt shape: { parsed, savedAt, summary } | null
+
+  // Helper: migrate stored states to current schema
+  const migrateStates = (rawStates) => {
+    const migrated = {};
+    for (const key of Object.keys(rawStates || {})) {
+      const s = rawStates[key];
+      if (!s) {
+        migrated[key] = initial();
+        continue;
+      }
+      let batches;
+      if (Array.isArray(s.batches)) {
+        batches = s.batches;
+      } else {
+        batches = [];
+        const called = s.called || 0;
+        const tickets = s.tickets || 0;
+        if (called > 0) {
+          batches.push({
+            id: `mig_called_${key}`,
+            count: called,
+            addedAt: s.callStartedAt || Date.now(),
+            calledAt: s.lastCallAt || Date.now(),
+          });
+        }
+        if (tickets - called > 0) {
+          batches.push({
+            id: `mig_pending_${key}`,
+            count: tickets - called,
+            addedAt: Date.now(),
+            calledAt: null,
+          });
+        }
+      }
+      let sentActions;
+      if (Array.isArray(s.sentActions)) {
+        sentActions = s.sentActions;
+      } else if (typeof s.sent === "number" && s.sent > 0) {
+        sentActions = [{
+          id: `mig_sent_${key}`,
+          count: s.sent,
+          at: s.lastCallAt || Date.now(),
+        }];
+      } else {
+        sentActions = [];
+      }
+      migrated[key] = {
+        batches,
+        sentActions,
+        callStartedAt: s.callStartedAt || null,
+        lastCallAt: s.lastCallAt || null,
+      };
+    }
+    return migrated;
+  };
+
+  // Check for saved state and offer to resume
+  useEffect(() => {
+    try {
+      const raw = typeof window !== "undefined" && window.localStorage
+        ? window.localStorage.getItem("expediter:state")
+        : null;
+      if (!raw) {
+        setLoaded(true);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      // Check if there's anything meaningful to resume
+      const states = parsed.states || {};
+      const hasActivity = Object.values(states).some((s) => {
+        if (!s) return false;
+        const hasBatches = Array.isArray(s.batches) && s.batches.length > 0;
+        const hasSent = Array.isArray(s.sentActions) && s.sentActions.length > 0;
+        const hasOldData = (s.tickets || 0) > 0 || (s.sent || 0) > 0;
+        return hasBatches || hasSent || hasOldData;
+      });
+      if (!hasActivity) {
+        // Apply settings (event name, total, openCount) silently — no need to prompt
+        if (parsed.eventName) setEventName(parsed.eventName);
+        if (typeof parsed.total === "number") setTotal(parsed.total);
+        if (typeof parsed.openCount === "boolean") setOpenCount(parsed.openCount);
+        setLoaded(true);
+        return;
+      }
+      // Build summary for the resume prompt
+      const migrated = migrateStates(states);
+      const summary = Object.keys(migrated).map((k) => {
+        const s = migrated[k];
+        const sent = s.sentActions.reduce((a, x) => a + x.count, 0);
+        const tickets = s.batches.reduce((a, b) => a + b.count, 0);
+        return { key: k, sent, tickets };
+      });
+      setResumePrompt({
+        parsed,
+        migrated,
+        savedAt: parsed.savedAt || null,
+        summary,
+      });
+    } catch (e) {
+      // Bad data — start fresh
+      setLoaded(true);
+    }
+  }, []);
+
+  const acceptResume = () => {
+    if (!resumePrompt) return;
+    const { parsed, migrated } = resumePrompt;
+    setStates(migrated);
+    if (parsed.eventName) setEventName(parsed.eventName);
+    if (typeof parsed.total === "number") setTotal(parsed.total);
+    if (typeof parsed.openCount === "boolean") setOpenCount(parsed.openCount);
+    setResumePrompt(null);
+    setLoaded(true);
+  };
+
+  const declineResume = () => {
+    if (!resumePrompt) return;
+    // Keep settings (event name, total, openCount) but discard counts
+    const { parsed } = resumePrompt;
+    if (parsed.eventName) setEventName(parsed.eventName);
+    if (typeof parsed.total === "number") setTotal(parsed.total);
+    if (typeof parsed.openCount === "boolean") setOpenCount(parsed.openCount);
+    setResumePrompt(null);
+    setLoaded(true);
+  };
+
+  // Persist on change
+  useEffect(() => {
+    if (!loaded) return;
+    (async () => {
+      try {
+        if (typeof window !== "undefined" && window.localStorage) {
+          window.localStorage.setItem(
+            "expediter:state",
+            JSON.stringify({ states, eventName, total, openCount, savedAt: Date.now() })
+          );
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, [states, eventName, total, openCount, loaded]);
+
+  const updateCourse = (id, next) => {
+    setStates((prev) => ({ ...prev, [id]: next }));
+  };
+
+  const resetAll = () => {
+    setStates({
+      starter: initial(),
+      main: initial(),
+      dessert: initial(),
+    });
+    setConfirmResetAll(false);
+  };
+
+  // Aggregate
+  const sumSent = (s) =>
+    (s.sentActions || []).reduce((a, x) => a + x.count, 0);
+  const totalSent =
+    sumSent(states.starter) + sumSent(states.main) + sumSent(states.dessert);
+  const totalExpected = total * 3;
+
+  return (
+    <div className="app">
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700;800&family=Bebas+Neue&display=swap');
+
+        * { box-sizing: border-box; }
+
+        .app {
+          min-height: 100vh;
+          background: #0a0a0b;
+          background-image:
+            radial-gradient(circle at 20% 0%, rgba(255, 90, 60, 0.08) 0%, transparent 50%),
+            radial-gradient(circle at 80% 100%, rgba(255, 181, 71, 0.06) 0%, transparent 50%);
+          color: #f5f5f5;
+          font-family: 'JetBrains Mono', monospace;
+          padding: 20px;
+          padding-bottom: 40px;
+        }
+
+        .header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 24px;
+          padding-bottom: 20px;
+          border-bottom: 2px solid #1f1f23;
+          gap: 16px;
+          flex-wrap: wrap;
+        }
+
+        .header-left {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .event-input {
+          background: transparent;
+          border: none;
+          color: #f5f5f5;
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 32px;
+          letter-spacing: 0.08em;
+          padding: 0;
+          outline: none;
+          min-width: 280px;
+        }
+        .event-input:focus {
+          border-bottom: 2px solid #ffb547;
+        }
+
+        .header-sub {
+          font-size: 11px;
+          letter-spacing: 0.2em;
+          color: #6b7280;
+          text-transform: uppercase;
+        }
+
+        .header-right {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+        }
+
+        .grand-total {
+          text-align: right;
+        }
+        .grand-total-num {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 40px;
+          line-height: 1;
+          letter-spacing: 0.04em;
+        }
+        .grand-total-label {
+          font-size: 10px;
+          letter-spacing: 0.2em;
+          color: #6b7280;
+          text-transform: uppercase;
+          margin-top: 2px;
+        }
+
+        .reset-all {
+          background: transparent;
+          border: 1px solid #3f3f46;
+          color: #9ca3af;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          letter-spacing: 0.15em;
+          padding: 10px 16px;
+          cursor: pointer;
+          text-transform: uppercase;
+          font-weight: 700;
+          transition: all 0.15s;
+        }
+        .reset-all:hover {
+          border-color: #ef4444;
+          color: #ef4444;
+        }
+
+        .grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+          gap: 20px;
+        }
+
+        .card {
+          background: #131316;
+          border: 1px solid #27272a;
+          border-top: 4px solid var(--accent);
+          padding: 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+
+        .card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .course-name {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 28px;
+          letter-spacing: 0.1em;
+          color: var(--accent);
+        }
+        .timer-pill {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 13px;
+          font-weight: 700;
+          padding: 4px 10px;
+          border: 1px solid;
+          border-radius: 999px;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          letter-spacing: 0.05em;
+        }
+        .timer-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
+        }
+
+        .remaining-block {
+          display: flex;
+          align-items: baseline;
+          gap: 12px;
+          padding: 8px 0;
+        }
+        .remaining-num {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 88px;
+          line-height: 0.85;
+          color: #fafafa;
+          letter-spacing: -0.02em;
+        }
+        .remaining-label {
+          font-size: 11px;
+          letter-spacing: 0.2em;
+          color: #6b7280;
+          text-transform: uppercase;
+        }
+
+        .progress-track {
+          position: relative;
+          height: 8px;
+          background: #1f1f23;
+          overflow: hidden;
+        }
+        .progress-sent {
+          position: absolute;
+          left: 0;
+          top: 0;
+          height: 100%;
+          background: var(--accent);
+          transition: width 0.3s;
+        }
+        .progress-called {
+          position: absolute;
+          top: 0;
+          height: 100%;
+          background: var(--accent);
+          opacity: 0.4;
+          transition: all 0.3s;
+        }
+        .progress-tickets {
+          position: absolute;
+          top: 0;
+          height: 100%;
+          background: var(--accent);
+          opacity: 0.15;
+          transition: all 0.3s;
+        }
+
+        .stats {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 8px;
+          padding: 12px;
+          background: #0a0a0b;
+          border: 1px solid #1f1f23;
+        }
+        .stat {
+          text-align: center;
+        }
+        .stat-label {
+          font-size: 9px;
+          letter-spacing: 0.2em;
+          color: #6b7280;
+          text-transform: uppercase;
+          margin-bottom: 4px;
+        }
+        .stat-value {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 32px;
+          line-height: 1;
+        }
+
+        .stage {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .stage-label {
+          font-size: 10px;
+          letter-spacing: 0.2em;
+          color: #9ca3af;
+          text-transform: uppercase;
+          font-weight: 700;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .pending-badge {
+          background: var(--accent);
+          color: #0a0a0b;
+          padding: 2px 8px;
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.05em;
+        }
+
+        .btn-row {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+
+        .btn {
+          font-family: 'JetBrains Mono', monospace;
+          font-weight: 800;
+          font-size: 14px;
+          padding: 12px 14px;
+          border: 1px solid #27272a;
+          background: #1a1a1f;
+          color: #fafafa;
+          cursor: pointer;
+          letter-spacing: 0.05em;
+          transition: all 0.1s;
+          flex: 1;
+          min-width: 52px;
+          text-transform: uppercase;
+        }
+        .btn:hover:not(:disabled) {
+          background: #27272a;
+          transform: translateY(-1px);
+        }
+        .btn:active:not(:disabled) {
+          transform: translateY(0);
+        }
+        .btn:disabled {
+          opacity: 0.3;
+          cursor: not-allowed;
+        }
+
+        .btn-add:hover:not(:disabled) {
+          border-color: var(--accent);
+          color: var(--accent);
+        }
+
+        .btn-sub {
+          flex: 0 0 auto;
+          background: transparent;
+          color: #9ca3af;
+        }
+
+        .btn-call {
+          width: 100%;
+          padding: 16px;
+          font-size: 16px;
+          background: var(--accent);
+          color: #0a0a0b;
+          border-color: var(--accent);
+          font-weight: 800;
+          letter-spacing: 0.1em;
+        }
+        .btn-call:hover:not(:disabled) {
+          filter: brightness(1.1);
+          transform: translateY(-2px);
+        }
+        .btn-call:disabled {
+          background: #1a1a1f;
+          color: #4b5563;
+          border-color: #27272a;
+        }
+
+        .btn-send {
+          background: #1a1a1f;
+        }
+        .btn-send:hover:not(:disabled) {
+          background: var(--accent);
+          color: #0a0a0b;
+          border-color: var(--accent);
+        }
+        .btn-send-all {
+          flex: 0 0 auto;
+          background: transparent;
+          border-color: var(--accent);
+          color: var(--accent);
+        }
+        .btn-send-all:hover:not(:disabled) {
+          background: var(--accent);
+          color: #0a0a0b;
+        }
+
+        .footer-row {
+          display: flex;
+          gap: 8px;
+          justify-content: space-between;
+          padding-top: 8px;
+          border-top: 1px solid #1f1f23;
+        }
+        .btn-ghost {
+          flex: 1;
+          background: transparent;
+          color: #9ca3af;
+          font-size: 11px;
+        }
+        .btn-reset {
+          flex: 0 0 auto;
+          background: transparent;
+          color: #6b7280;
+          border-color: #3f3f46;
+          font-size: 11px;
+          padding: 12px 18px;
+        }
+        .btn-reset-full {
+          flex: 1;
+        }
+        .btn-reset:hover {
+          color: #ef4444;
+          border-color: #ef4444;
+        }
+
+        @media (max-width: 768px) {
+          .grid { grid-template-columns: 1fr; }
+          .remaining-num { font-size: 72px; }
+          .event-input { font-size: 24px; min-width: 200px; }
+        }
+
+        .modal-backdrop {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.75);
+          backdrop-filter: blur(4px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+          animation: fadeIn 0.15s ease-out;
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        .modal {
+          background: #131316;
+          border: 1px solid #27272a;
+          border-top: 4px solid #ef4444;
+          padding: 28px;
+          max-width: 440px;
+          width: calc(100% - 40px);
+          animation: slideUp 0.2s ease-out;
+        }
+        @keyframes slideUp {
+          from { transform: translateY(12px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+        .modal-title {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 26px;
+          letter-spacing: 0.08em;
+          color: #fafafa;
+          margin-bottom: 12px;
+        }
+        .modal-message {
+          font-size: 13px;
+          color: #9ca3af;
+          line-height: 1.6;
+          margin-bottom: 24px;
+        }
+        .modal-actions {
+          display: flex;
+          gap: 10px;
+          justify-content: flex-end;
+        }
+        .modal-btn {
+          flex: 0 0 auto;
+          padding: 12px 22px;
+          font-size: 12px;
+        }
+        .modal-btn-danger {
+          background: #ef4444;
+          border-color: #ef4444;
+          color: #0a0a0b;
+        }
+        .modal-btn-danger:hover {
+          background: #dc2626;
+          border-color: #dc2626;
+        }
+        .modal-btn-primary {
+          background: #ffb547;
+          border-color: #ffb547;
+          color: #0a0a0b;
+        }
+        .modal-btn-primary:hover:not(:disabled) {
+          background: #ffc56a;
+          border-color: #ffc56a;
+        }
+
+        .icon-btn {
+          background: transparent;
+          border: 1px solid #3f3f46;
+          color: #9ca3af;
+          width: 40px;
+          height: 40px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .icon-btn:hover {
+          color: #ffb547;
+          border-color: #ffb547;
+          transform: rotate(45deg);
+        }
+
+        .modal-settings {
+          border-top-color: #ffb547;
+          max-width: 480px;
+        }
+        .settings-section {
+          margin-bottom: 20px;
+        }
+        .settings-label {
+          display: block;
+          font-size: 10px;
+          letter-spacing: 0.2em;
+          color: #9ca3af;
+          text-transform: uppercase;
+          font-weight: 700;
+          margin-bottom: 10px;
+        }
+        .toggle-row {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+        }
+        .toggle-btn {
+          background: #0a0a0b;
+          border: 1px solid #27272a;
+          color: #9ca3af;
+          padding: 14px 12px;
+          cursor: pointer;
+          text-align: left;
+          transition: all 0.15s;
+          font-family: 'JetBrains Mono', monospace;
+        }
+        .toggle-btn:hover {
+          border-color: #3f3f46;
+        }
+        .toggle-active {
+          border-color: #ffb547 !important;
+          background: rgba(255, 181, 71, 0.08);
+          color: #fafafa;
+        }
+        .toggle-title {
+          font-weight: 800;
+          font-size: 13px;
+          letter-spacing: 0.05em;
+          margin-bottom: 4px;
+        }
+        .toggle-desc {
+          font-size: 10px;
+          color: #6b7280;
+          line-height: 1.4;
+        }
+        .toggle-active .toggle-desc {
+          color: #9ca3af;
+        }
+
+        .number-row {
+          display: flex;
+          gap: 6px;
+          align-items: stretch;
+          margin-bottom: 10px;
+        }
+        .num-btn {
+          background: #1a1a1f;
+          border: 1px solid #27272a;
+          color: #fafafa;
+          padding: 12px 10px;
+          cursor: pointer;
+          font-family: 'JetBrains Mono', monospace;
+          font-weight: 700;
+          font-size: 12px;
+          flex: 0 0 auto;
+          min-width: 48px;
+          transition: all 0.1s;
+        }
+        .num-btn:hover {
+          border-color: #ffb547;
+          color: #ffb547;
+        }
+        .num-input {
+          flex: 1;
+          background: #0a0a0b;
+          border: 1px solid #27272a;
+          color: #fafafa;
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 28px;
+          letter-spacing: 0.05em;
+          padding: 4px 12px;
+          text-align: center;
+          outline: none;
+          min-width: 0;
+        }
+        .num-input:focus {
+          border-color: #ffb547;
+        }
+        .num-input::-webkit-inner-spin-button,
+        .num-input::-webkit-outer-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        .presets-row {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+        .preset-btn {
+          flex: 1;
+          min-width: 50px;
+          background: transparent;
+          border: 1px solid #27272a;
+          color: #9ca3af;
+          padding: 8px 6px;
+          cursor: pointer;
+          font-family: 'JetBrains Mono', monospace;
+          font-weight: 700;
+          font-size: 12px;
+          transition: all 0.1s;
+        }
+        .preset-btn:hover {
+          border-color: #ffb547;
+          color: #ffb547;
+        }
+        .preset-active {
+          border-color: #ffb547 !important;
+          color: #ffb547 !important;
+          background: rgba(255, 181, 71, 0.08);
+        }
+
+        .settings-note {
+          font-size: 11px;
+          color: #6b7280;
+          line-height: 1.5;
+          padding: 10px 12px;
+          background: #0a0a0b;
+          border-left: 2px solid #3f3f46;
+          margin-bottom: 20px;
+        }
+
+        .btn-row-wrap {
+          flex-wrap: wrap;
+        }
+        .btn-num {
+          flex: 1 1 calc(25% - 6px);
+          min-width: 0;
+        }
+        .btn-custom {
+          flex: 1 1 calc(25% - 6px);
+          min-width: 0;
+          background: transparent;
+          border-style: dashed;
+          color: #9ca3af;
+        }
+        .btn-add.btn-custom:hover:not(:disabled) {
+          border-style: solid;
+          border-color: var(--accent);
+          color: var(--accent);
+          background: transparent;
+        }
+        .btn-send.btn-custom:hover:not(:disabled) {
+          border-style: solid;
+          background: var(--accent);
+          color: #0a0a0b;
+          border-color: var(--accent);
+        }
+
+        .batch-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          margin-bottom: 6px;
+        }
+        .btn-call-batch {
+          flex: 1 1 auto;
+          min-width: 100px;
+          padding: 14px 12px;
+          font-size: 14px;
+          letter-spacing: 0.05em;
+          animation: batchPop 0.25s ease-out;
+        }
+        @keyframes batchPop {
+          from { transform: scale(0.92); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+        .btn-call-all {
+          width: 100%;
+          background: transparent;
+          border: 1px dashed var(--accent);
+          color: var(--accent);
+          padding: 10px;
+          font-size: 11px;
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: 'JetBrains Mono', monospace;
+          transition: all 0.15s;
+        }
+        .btn-call-all:hover {
+          background: rgba(255, 181, 71, 0.1);
+          border-style: solid;
+        }
+
+        .btn-uncall {
+          width: 100%;
+          margin-top: 6px;
+          background: transparent;
+          border: 1px solid #3f3f46;
+          color: #9ca3af;
+          padding: 8px;
+          font-size: 11px;
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: 'JetBrains Mono', monospace;
+          transition: all 0.15s;
+        }
+        .btn-uncall:hover:not(:disabled) {
+          border-color: var(--accent);
+          color: var(--accent);
+        }
+        .btn-uncall:disabled {
+          opacity: 0.35;
+          cursor: not-allowed;
+        }
+
+        .modal-numinput {
+          border-top-color: #ffb547;
+          max-width: 380px;
+        }
+        .num-input-large {
+          width: 100%;
+          font-size: 48px;
+          padding: 14px 16px;
+          margin-bottom: 12px;
+          height: auto;
+        }
+
+        .modal-resume {
+          border-top-color: #10b981;
+          max-width: 460px;
+        }
+        .modal-resume strong {
+          color: #fafafa;
+          font-weight: 700;
+        }
+        .resume-summary {
+          background: #0a0a0b;
+          border: 1px solid #1f1f23;
+          padding: 4px 0;
+          margin-bottom: 22px;
+        }
+        .resume-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 12px 14px;
+          border-left: 3px solid var(--accent, #3f3f46);
+        }
+        .resume-row + .resume-row {
+          border-top: 1px solid #1f1f23;
+        }
+        .resume-row-name {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 16px;
+          letter-spacing: 0.1em;
+          color: var(--accent, #fafafa);
+        }
+        .resume-row-stat {
+          display: flex;
+          align-items: baseline;
+          gap: 6px;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 12px;
+        }
+        .resume-num {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 22px;
+          color: #fafafa;
+          letter-spacing: 0.05em;
+        }
+        .resume-num-muted {
+          color: #6b7280;
+        }
+        .resume-sep {
+          font-size: 9px;
+          letter-spacing: 0.18em;
+          text-transform: uppercase;
+          color: #6b7280;
+          margin-right: 4px;
+        }
+        .modal-btn-discard {
+          background: transparent;
+          border-color: #3f3f46;
+          color: #9ca3af;
+        }
+        .modal-btn-discard:hover {
+          border-color: #ef4444;
+          color: #ef4444;
+        }
+      `}</style>
+
+      <div className="header">
+        <div className="header-left">
+          <input
+            className="event-input"
+            value={eventName}
+            onChange={(e) => setEventName(e.target.value)}
+          />
+          <div className="header-sub">
+            Expediter · {openCount ? "opin talning" : `${total} gestir`} · 3 réttir
+          </div>
+        </div>
+        <div className="header-right">
+          <div className="grand-total">
+            <div className="grand-total-num">
+              {totalSent}
+              {!openCount && (
+                <span style={{ color: "#3f3f46" }}> / {totalExpected}</span>
+              )}
+            </div>
+            <div className="grand-total-label">Total Sent</div>
+          </div>
+          <button className="icon-btn" onClick={() => setSettingsOpen(true)} title="Stillingar">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+          <button className="reset-all" onClick={() => setConfirmResetAll(true)}>
+            Reset Allt
+          </button>
+        </div>
+      </div>
+
+      <div className="grid">
+        {COURSES.map((c) => (
+          <CourseCard
+            key={c.id}
+            course={c}
+            state={states[c.id]}
+            onChange={(next) => updateCourse(c.id, next)}
+            total={total}
+            openCount={openCount}
+            onCustomInput={setCustomInput}
+          />
+        ))}
+      </div>
+
+      <ResumeDialog
+        open={resumePrompt != null}
+        eventName={resumePrompt?.parsed?.eventName || eventName}
+        savedAt={resumePrompt?.savedAt}
+        summary={resumePrompt?.summary || []}
+        courses={COURSES}
+        onResume={acceptResume}
+        onDiscard={declineResume}
+      />
+
+      <NumberInputDialog
+        open={customInput != null}
+        title={customInput?.title || ""}
+        placeholder={customInput?.placeholder || ""}
+        max={customInput?.max}
+        onSubmit={(n) => {
+          customInput?.onSubmit(n);
+          setCustomInput(null);
+        }}
+        onCancel={() => setCustomInput(null)}
+      />
+
+      <SettingsDialog
+        open={settingsOpen}
+        currentTotal={total}
+        currentOpenCount={openCount}
+        onSave={(newTotal, newOpen) => {
+          setTotal(newTotal);
+          setOpenCount(newOpen);
+          setSettingsOpen(false);
+        }}
+        onCancel={() => setSettingsOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmResetAll}
+        title="Núllstilla ALLA rétti?"
+        message="Þetta hreinsar allar talningar og tímamæla fyrir alla þrjá rétti. Ekki hægt að afturkalla."
+        onConfirm={resetAll}
+        onCancel={() => setConfirmResetAll(false)}
+      />
+    </div>
+  );
+}
+
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(React.createElement(ExpediterCounter));
+
+  </script>
+
+  <script>
+    const observer = new MutationObserver(() => {
+      const root = document.getElementById('root');
+      if (root && root.children.length > 0) {
+        hideBootLoader();
+        observer.disconnect();
+      }
+    });
+    observer.observe(document.getElementById('root'), { childList: true });
+    setTimeout(hideBootLoader, 5000);
+  </script>
+</body>
+</html>
