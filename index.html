@@ -80,6 +80,20 @@
     #root {
       min-height: 100vh;
     }
+    /* In fullscreen, scroll inside #root instead of the page. Pulling down at the
+       top of the page is Safari's gesture for leaving fullscreen. */
+    html.in-fullscreen,
+    html.in-fullscreen body {
+      height: 100%;
+      overflow: hidden;
+    }
+    html.in-fullscreen #root {
+      height: 100%;
+      min-height: 0;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
     #boot-loader {
       position: fixed;
       inset: 0;
@@ -537,7 +551,7 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
   const called = batches
     .filter((b) => b.calledAt != null)
     .reduce((a, b) => a + b.count, 0);
-  const pendingBatches = batches.filter((b) => b.calledAt == null);
+  const pendingBatches = batches.filter((b) => b.calledAt == null).sort((a, b) => a.addedAt - b.addedAt);
   const sent = sentActions.reduce((a, s) => a + s.count, 0);
   const remaining = openCount ? null : Math.max(0, total - sent);
   const pendingSend = called - sent;
@@ -1244,7 +1258,9 @@ function ExpediterCounter() {
 
   useEffect(() => {
     const onChange = () => {
-      setIsFullscreen(!!(document.fullscreenElement || document.webkitFullscreenElement));
+      const fs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      setIsFullscreen(fs);
+      document.documentElement.classList.toggle("in-fullscreen", fs);
     };
     document.addEventListener("fullscreenchange", onChange);
     document.addEventListener("webkitfullscreenchange", onChange);
@@ -2048,9 +2064,10 @@ function ExpediterCounter() {
           border-color: var(--accent);
         }
 
+        /* Orders listed one per row, oldest first */
         .batch-row {
           display: flex;
-          flex-wrap: wrap;
+          flex-direction: column;
           gap: 6px;
           margin-bottom: 6px;
         }
@@ -2063,8 +2080,7 @@ function ExpediterCounter() {
         }
 
         .order-tile {
-          flex: 1 1 auto;
-          min-width: 110px;
+          min-width: 0;
           display: flex;
           flex-direction: column;
           border: 1px solid var(--accent);

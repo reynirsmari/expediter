@@ -55,7 +55,7 @@ Allar talningar vistast í `localStorage` vafrans. Það þýðir:
 - **Wake lock**: appið hindrar að spjaldtölvan fari í svefn meðan það er opið (virkar í Chrome og Safari á iOS 16.4+).
 - **No zoom**: pinch-zoom og double-tap zoom eru aftengd svo þú zoom-ar ekki óvart.
 - **Sjálfvirk vistun**: hver einasta breyting (kall, sent, +N) vistast strax.
-- **Fullur skjár**: takkinn við hliðina á þema-takkanum setur appið á fullan skjá (Chrome, iPad Safari). Ekki í boði á iPhone — notaðu þá Add to Home Screen.
+- **Fullur skjár**: takkinn við hliðina á þema-takkanum setur appið á fullan skjá (Chrome, iPad Safari). Ekki í boði á iPhone. Í Safari getur það að draga niður efst á síðunni lokað fullum skjá — best er að nota Add to Home Screen (á iPhone og iPad), þá er appið alltaf á fullum skjá.
 - **↶ Afturkalla**: efst í hægra horni. Afturkallar síðustu aðgerð, sama í hvaða rétti hún var (líka Reset). Takkinn sýnir hvaða aðgerð verður afturkölluð. Hægt að ýta mörgum sinnum.
 
 ## Fyrsta keyrslan
