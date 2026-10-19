@@ -75,7 +75,10 @@ Allar talningar vistast í `localStorage` vafrans. Það þýðir:
 ### Pantanir: borð og tímamælir
 
 - Hver pöntun sýnir tímamæli: í stage 2 tímann síðan miðinn kom inn, og undir "Merkja sent" tímann síðan hún var kölluð. Grænt → gult eftir 4 mín → rautt eftir 8 mín.
-- Smelltu á "+ Borð" á pöntun til að skrá borðnúmer (og aftur til að breyta eða fjarlægja).
+- Þegar ýtt er á +1 til +8 eða +N í "Miðar inn" opnast borðnúmers-glugginn sjálfkrafa. Sláðu inn númer, eða ýttu á Staðfesta / × til að hafa pöntunina án borðs.
+- Smelltu á "+ Borð" / "Borð N" á pöntun til að skrá, breyta eða fjarlægja borðnúmer síðar.
+- "×" á pöntun í stage 2 eyðir henni (t.d. ef ýtt var óvart á +1). Hægt að fá hana aftur með ↶ Afturkalla.
+- Allir gluggar sem hægt er að loka án þess að vista hafa "×" í efra hægra horni.
 - Kallaðar pantanir sjást í lista undir "3. Merkja sent" þangað til allir diskar þeirra eru sendir. Sendir diskar dragast frá elstu kölluðu pöntuninni fyrst.
 
 Bæði stage 2 og 3 hafa "↶ Bakka" takka neðst ef þú smellir óvart.
