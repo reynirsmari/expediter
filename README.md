@@ -7,10 +7,24 @@ Talningar-app fyrir expediter á veitingahúsum. Virkar fullkomlega offline.
 - `index.html` — Aðalskráin (inniheldur appkóðann inline)
 - `react.min.js`, `react-dom.min.js` — React 18
 - `babel.min.js` — Þýðir JSX í vafranum
+- `manifest.webmanifest`, `sw.js`, `*.png` — Gera appið uppsetjanlegt (fullur skjár, virkar offline)
 
 **Allar þrjár JS skrárnar þurfa að vera í sömu möppu og `index.html`.**
 
-## Uppsetning á spjaldtölvu
+## Uppsetning sem app (mælt með)
+
+Ef appið er hýst á GitHub Pages (Settings → Pages → Branch: `main`, mappa `/ (root)`) fæst slóðin
+`https://reynirsmari.github.io/expediter/`. Opnaðu hana einu sinni með netsambandi og:
+
+- **iPad (Safari)**: Share → Add to Home Screen.
+- **Android (Chrome)**: Chrome menu → Install app / Add to Home screen.
+
+Appið opnast þá á fullum skjá án vafrastikna og virkar offline eftir fyrstu opnun.
+Ný útgáfa birtist sjálfkrafa næst þegar appið er opnað með netsambandi.
+
+Athugið: talningar sem vistaðar eru í appinu eru aðskildar frá talningum í `index.html` opnaðri úr Files.
+
+## Uppsetning á spjaldtölvu (úr skrá)
 
 ### iPad (Safari)
 1. Afritaðu alla möppuna `expediter-app` í Files appið (t.d. iCloud Drive eða On My iPad).
@@ -41,6 +55,8 @@ Allar talningar vistast í `localStorage` vafrans. Það þýðir:
 - **Wake lock**: appið hindrar að spjaldtölvan fari í svefn meðan það er opið (virkar í Chrome og Safari á iOS 16.4+).
 - **No zoom**: pinch-zoom og double-tap zoom eru aftengd svo þú zoom-ar ekki óvart.
 - **Sjálfvirk vistun**: hver einasta breyting (kall, sent, +N) vistast strax.
+- **Fullur skjár**: takkinn við hliðina á þema-takkanum setur appið á fullan skjá (Chrome, iPad Safari). Ekki í boði á iPhone — notaðu þá Add to Home Screen.
+- **↶ Afturkalla**: efst í hægra horni. Afturkallar síðustu aðgerð, sama í hvaða rétti hún var (líka Reset). Takkinn sýnir hvaða aðgerð verður afturkölluð. Hægt að ýta mörgum sinnum.
 
 ## Fyrsta keyrslan
 
@@ -52,9 +68,15 @@ Allar talningar vistast í `localStorage` vafrans. Það þýðir:
 
 ## Workflow
 
-1. **Stage 1 — Miðar inn**: Þjónn kemur með pöntun. Þú smellir +1 til +8 (eða +N fyrir custom tölu). Hver smellur býr til nýtt batch.
-2. **Stage 2 — Kalla**: Hver óköllaða batch hefur sinn eigin "Kalla N" takka. Þegar pöntun á að fara í eldhús, smellir þú á þann takka. Tími síðan síðasta kall birtist í toppnum á kortinu.
+1. **Stage 1 — Miðar inn**: Þjónn kemur með pöntun. Þú smellir +1 til +8 (eða +N fyrir custom tölu). Hver smellur býr til nýja pöntun.
+2. **Stage 2 — Kalla**: Hver óköllað pöntun hefur sinn eigin "Kalla N" takka. Þegar pöntun á að fara í eldhús, smellir þú á þann takka. Tími síðan síðasta kall birtist í toppnum á kortinu.
 3. **Stage 3 — Sent**: Þegar diskar fara út úr eldhúsi, smellir þú á +N (eða "Allt").
+
+### Pantanir: borð og tímamælir
+
+- Hver pöntun sýnir tímamæli: í stage 2 tímann síðan miðinn kom inn, og undir "Merkja sent" tímann síðan hún var kölluð. Grænt → gult eftir 4 mín → rautt eftir 8 mín.
+- Smelltu á "+ Borð" á pöntun til að skrá borðnúmer (og aftur til að breyta eða fjarlægja).
+- Kallaðar pantanir sjást í lista undir "3. Merkja sent" þangað til allir diskar þeirra eru sendir. Sendir diskar dragast frá elstu kölluðu pöntuninni fyrst.
 
 Bæði stage 2 og 3 hafa "↶ Bakka" takka neðst ef þú smellir óvart.
 
