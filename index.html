@@ -306,7 +306,7 @@ function ResumeDialog({ open, eventName, savedAt, summary, courses, onResume, on
   );
 }
 
-function NumberInputDialog({ open, title, placeholder, max, quickPicks: picks, initialValue, onSubmit, onClear, onCancel }) {
+function NumberInputDialog({ open, title, placeholder, max, quickPicks: picks, initialValue, allowEmpty, onSubmit, onClear, onCancel }) {
   const [value, setValue] = useState("");
   const inputRef = useRef(null);
 
@@ -321,15 +321,17 @@ function NumberInputDialog({ open, title, placeholder, max, quickPicks: picks, i
   if (!open) return null;
 
   const parsed = parseInt(value, 10);
+  const isEmpty = value.trim() === "";
   const isValid =
-    Number.isFinite(parsed) &&
-    parsed > 0 &&
-    parsed <= 999 &&
-    (max == null || parsed <= max);
+    (allowEmpty && isEmpty) ||
+    (Number.isFinite(parsed) &&
+      parsed > 0 &&
+      parsed <= 999 &&
+      (max == null || parsed <= max));
 
   const submit = () => {
     if (!isValid) return;
-    onSubmit(parsed);
+    onSubmit(isEmpty ? null : parsed);
   };
 
   const handleKey = (e) => {
@@ -349,6 +351,7 @@ function NumberInputDialog({ open, title, placeholder, max, quickPicks: picks, i
         )}
         <input
           ref={inputRef}
+          autoFocus
           type="number"
           inputMode="numeric"
           className="num-input num-input-large"
@@ -567,6 +570,11 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
 
   const sinceLastCall = lastCallAt ? now - lastCallAt : null;
 
+  // Latest state, for dialog callbacks that run after the state has moved on
+  // (e.g. the table dialog opened right after adding an order)
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
   const addBatch = (count) => {
     if (count <= 0) return;
     const newBatch = {
@@ -577,6 +585,7 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
       table: null,
     };
     onChange({ ...state, batches: [...batches, newBatch] }, `+${count} miðar`);
+    editTable(newBatch);
   };
 
   const removeBatch = (batchId) => {
@@ -589,8 +598,12 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
   };
 
   const setTable = (batchId, table) => {
-    const next = batches.map((b) => (b.id === batchId ? { ...b, table } : b));
-    onChange({ ...state, batches: next }, table == null ? "Borð fjarlægt" : `Borð ${table}`);
+    const cur = stateRef.current;
+    const curBatches = cur.batches || [];
+    const batch = curBatches.find((b) => b.id === batchId);
+    if (!batch || (batch.table ?? null) === table) return;
+    const next = curBatches.map((b) => (b.id === batchId ? { ...b, table } : b));
+    onChange({ ...cur, batches: next }, table == null ? "Borð fjarlægt" : `Borð ${table}`);
   };
 
   const editTable = (batch) => {
@@ -599,6 +612,7 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
       placeholder: "Borðnúmer",
       quickPicks: [],
       initialValue: batch.table,
+      allowEmpty: true,
       onSubmit: (n) => setTable(batch.id, n),
       onClear: batch.table != null ? () => setTable(batch.id, null) : null,
     });
@@ -1033,7 +1047,10 @@ function ExpediterCounter() {
     return "dark";
   });
   const [customInput, setCustomInput] = useState(null);
-  // customInput shape: { title, placeholder, max?, onSubmit }
+  // customInput shape: { key, title, placeholder, max?, quickPicks?, initialValue?, allowEmpty?, onSubmit, onClear? }
+  // A new key per dialog so one opened straight after another starts fresh
+  const openCustomInput = (opts) =>
+    setCustomInput({ ...opts, key: `ci_${Date.now()}_${Math.random().toString(36).slice(2, 7)}` });
   const [resumePrompt, setResumePrompt] = useState(null);
   // resumePrompt shape: { parsed, savedAt, summary } | null
   const [history, setHistory] = useState([]);
@@ -2344,7 +2361,7 @@ function ExpediterCounter() {
             onChange={(next, label) => updateCourse(c.id, next, label)}
             total={total}
             openCount={openCount}
-            onCustomInput={setCustomInput}
+            onCustomInput={openCustomInput}
           />
         ))}
       </div>
@@ -2360,19 +2377,22 @@ function ExpediterCounter() {
       />
 
       <NumberInputDialog
+        key={customInput?.key}
         open={customInput != null}
         title={customInput?.title || ""}
         placeholder={customInput?.placeholder || ""}
         max={customInput?.max}
         quickPicks={customInput?.quickPicks}
         initialValue={customInput?.initialValue}
+        allowEmpty={customInput?.allowEmpty}
         onSubmit={(n) => {
-          customInput?.onSubmit(n);
+          // Close first: the callback may open the next dialog (+N → table number)
           setCustomInput(null);
+          customInput?.onSubmit(n);
         }}
         onClear={customInput?.onClear ? () => {
-          customInput.onClear();
           setCustomInput(null);
+          customInput.onClear();
         } : null}
         onCancel={() => setCustomInput(null)}
       />
