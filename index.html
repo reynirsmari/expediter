@@ -13,6 +13,11 @@
   <meta name="apple-mobile-web-app-title" content="Expediter" />
   <meta name="mobile-web-app-capable" content="yes" />
 
+  <!-- Installable app (works when served over https, e.g. GitHub Pages) -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <link rel="icon" type="image/png" href="icon-192.png" />
+
   <meta name="theme-color" content="#161616" />
   <meta name="theme-color" content="#161616" media="(prefers-color-scheme: dark)" />
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
@@ -195,6 +200,13 @@
       var el = document.getElementById('boot-loader');
       if (el) el.classList.add('hidden');
     }
+
+    // Offline cache for the installed app — only possible over http(s), not file://
+    try {
+      if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+        navigator.serviceWorker.register('sw.js').catch(function() { /* ignore */ });
+      }
+    } catch (e) { /* ignore */ }
   </script>
 
   <!-- App code: JSX inlined to avoid file:// CORS issues -->
@@ -213,10 +225,19 @@ const INCREMENTS = [1, 2, 4, 6, 8, 10];
 
 function formatElapsed(ms) {
   if (ms == null) return "--:--";
-  const totalSec = Math.floor(ms / 1000);
+  // Clamp: an order created since the last timer tick would otherwise show a negative time
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+// Status color for a timer: green, yellow after 4 min, red after 8 min
+function timerToneFor(ms) {
+  if (ms == null) return "var(--text-muted)";
+  if (ms > 8 * 60 * 1000) return "var(--danger)";
+  if (ms > 4 * 60 * 1000) return "var(--alert)";
+  return "var(--success)";
 }
 
 function ResumeDialog({ open, eventName, savedAt, summary, courses, onResume, onDiscard }) {
@@ -274,13 +295,13 @@ function ResumeDialog({ open, eventName, savedAt, summary, courses, onResume, on
   );
 }
 
-function NumberInputDialog({ open, title, placeholder, max, onSubmit, onCancel }) {
+function NumberInputDialog({ open, title, placeholder, max, quickPicks: picks, initialValue, onSubmit, onClear, onCancel }) {
   const [value, setValue] = useState("");
   const inputRef = useRef(null);
 
   useEffect(() => {
     if (open) {
-      setValue("");
+      setValue(initialValue != null ? String(initialValue) : "");
       // Focus input after render
       setTimeout(() => inputRef.current?.focus(), 50);
     }
@@ -305,7 +326,7 @@ function NumberInputDialog({ open, title, placeholder, max, onSubmit, onCancel }
     if (e.key === "Escape") onCancel();
   };
 
-  const quickPicks = [9, 10, 12, 15, 20, 25].filter((n) => max == null || n <= max);
+  const quickPicks = (picks ?? [9, 10, 12, 15, 20, 25]).filter((n) => max == null || n <= max);
 
   return (
     <div className="modal-backdrop" onClick={onCancel}>
@@ -340,6 +361,11 @@ function NumberInputDialog({ open, title, placeholder, max, onSubmit, onCancel }
           </div>
         )}
         <div className="modal-actions">
+          {onClear && (
+            <button className="btn modal-btn modal-btn-discard" onClick={onClear}>
+              Fjarlægja
+            </button>
+          )}
           <button className="btn btn-ghost modal-btn" onClick={onCancel}>
             Hætta við
           </button>
@@ -499,14 +525,31 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
   const remaining = openCount ? null : Math.max(0, total - sent);
   const pendingSend = called - sent;
 
-  // Live timer for "since last call"
+  // Called orders still in the kitchen. Sent plates are assigned to called
+  // orders first-in-first-out, so an order leaves this list once fully sent.
+  const inKitchen = [];
+  {
+    let sentLeft = sent;
+    const calledInOrder = batches
+      .filter((b) => b.calledAt != null)
+      .sort((a, b) => a.calledAt - b.calledAt || a.addedAt - b.addedAt);
+    for (const b of calledInOrder) {
+      const out = Math.min(b.count, sentLeft);
+      sentLeft -= out;
+      if (out < b.count) inKitchen.push({ ...b, waiting: b.count - out });
+    }
+  }
+
+  // Live timers: since last call, and per order
   const [now, setNow] = useState(Date.now());
   const [confirmReset, setConfirmReset] = useState(false);
+  const hasLiveTimers = lastCallAt != null || pendingBatches.length > 0 || inKitchen.length > 0;
   useEffect(() => {
-    if (!lastCallAt) return;
+    if (!hasLiveTimers) return;
+    setNow(Date.now());
     const i = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(i);
-  }, [lastCallAt]);
+  }, [hasLiveTimers]);
 
   const sinceLastCall = lastCallAt ? now - lastCallAt : null;
 
@@ -517,8 +560,25 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
       count,
       addedAt: Date.now(),
       calledAt: null,
+      table: null,
     };
-    onChange({ ...state, batches: [...batches, newBatch] });
+    onChange({ ...state, batches: [...batches, newBatch] }, `+${count} miðar`);
+  };
+
+  const setTable = (batchId, table) => {
+    const next = batches.map((b) => (b.id === batchId ? { ...b, table } : b));
+    onChange({ ...state, batches: next }, table == null ? "Borð fjarlægt" : `Borð ${table}`);
+  };
+
+  const editTable = (batch) => {
+    onCustomInput({
+      title: `${course.name} — Borð`,
+      placeholder: "Borðnúmer",
+      quickPicks: [],
+      initialValue: batch.table,
+      onSubmit: (n) => setTable(batch.id, n),
+      onClear: batch.table != null ? () => setTable(batch.id, null) : null,
+    });
   };
 
   const removeLastUncalled = () => {
@@ -537,11 +597,12 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
         i === lastUncalledIdx ? { ...b, count: b.count - 1 } : b
       );
     }
-    onChange({ ...state, batches: next });
+    onChange({ ...state, batches: next }, "−1 miði");
   };
 
   const callBatch = (batchId) => {
     const t = Date.now();
+    const batch = batches.find((b) => b.id === batchId);
     const next = batches.map((b) =>
       b.id === batchId && b.calledAt == null ? { ...b, calledAt: t } : b
     );
@@ -550,7 +611,7 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
       batches: next,
       callStartedAt: callStartedAt ?? t,
       lastCallAt: t,
-    });
+    }, `Kalla ${batch ? batch.count : ""}`);
   };
 
   const callAllPending = () => {
@@ -564,7 +625,7 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
       batches: next,
       callStartedAt: callStartedAt ?? t,
       lastCallAt: t,
-    });
+    }, "Kalla allt");
   };
 
   // Undo last call: find the most recently called batch and put it back to pending.
@@ -593,7 +654,7 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
       batches: next,
       lastCallAt: newLastCallAt,
       callStartedAt: newCallStartedAt,
-    });
+    }, "Bakka kall");
   };
 
   const markSent = (n) => {
@@ -604,7 +665,7 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
       count: toSend,
       at: Date.now(),
     };
-    onChange({ ...state, sentActions: [...sentActions, action] });
+    onChange({ ...state, sentActions: [...sentActions, action] }, `Sent ${toSend}`);
   };
 
   const sendAll = () => {
@@ -614,7 +675,7 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
       count: pendingSend,
       at: Date.now(),
     };
-    onChange({ ...state, sentActions: [...sentActions, action] });
+    onChange({ ...state, sentActions: [...sentActions, action] }, `Sent allt (${pendingSend})`);
   };
 
   // Undo last sent action — symmetric with uncallLast
@@ -628,7 +689,7 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
     onChange({
       ...state,
       sentActions: sentActions.slice(0, -1),
-    });
+    }, "Bakka sent");
   };
 
   const reset = () => {
@@ -637,17 +698,11 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
       sentActions: [],
       callStartedAt: null,
       lastCallAt: null,
-    });
+    }, "Reset");
     setConfirmReset(false);
   };
 
-  // Status color logic for the timer
-  let timerTone = "var(--text-muted)";
-  if (sinceLastCall != null) {
-    if (sinceLastCall > 8 * 60 * 1000) timerTone = "var(--danger)";
-    else if (sinceLastCall > 4 * 60 * 1000) timerTone = "var(--alert)";
-    else timerTone = "var(--success)";
-  }
+  const timerTone = timerToneFor(sinceLastCall);
 
   return (
     <div
@@ -767,16 +822,33 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
         ) : (
           <>
             <div className="batch-row">
-              {pendingBatches.map((b) => (
-                <button
-                  key={b.id}
-                  className="btn btn-call btn-call-batch"
-                  onClick={() => callBatch(b.id)}
-                  title={`Bætt við ${new Date(b.addedAt).toLocaleTimeString("is-IS", { hour: "2-digit", minute: "2-digit" })}`}
-                >
-                  Kalla {b.count}
-                </button>
-              ))}
+              {pendingBatches.map((b) => {
+                const age = now - b.addedAt;
+                const tone = timerToneFor(age);
+                return (
+                  <div key={b.id} className="order-tile">
+                    <button
+                      className="order-meta"
+                      onClick={() => editTable(b)}
+                      title="Smelltu til að skrá borðnúmer"
+                    >
+                      <span className={`order-table ${b.table == null ? "order-table-empty" : ""}`}>
+                        {b.table == null ? "+ Borð" : `Borð ${b.table}`}
+                      </span>
+                      <span className="order-timer" style={{ color: tone }}>
+                        {formatElapsed(age)}
+                      </span>
+                    </button>
+                    <button
+                      className="btn btn-call btn-call-batch"
+                      onClick={() => callBatch(b.id)}
+                      title={`Bætt við ${new Date(b.addedAt).toLocaleTimeString("is-IS", { hour: "2-digit", minute: "2-digit" })}`}
+                    >
+                      Kalla {b.count}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
             {pendingBatches.length > 1 && (
               <button
@@ -809,6 +881,33 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
         <div className="stage-label">
           3. Merkja sent {pendingSend > 0 && <span className="pending-badge">{pendingSend} bíða</span>}
         </div>
+        {inKitchen.length > 0 && (
+          <div className="kitchen-list" aria-label="Pantanir í eldhúsi">
+            {inKitchen.map((b) => {
+              const age = now - b.calledAt;
+              const tone = timerToneFor(age);
+              return (
+                <button
+                  key={b.id}
+                  className="kitchen-row"
+                  style={{ borderLeftColor: tone }}
+                  onClick={() => editTable(b)}
+                  title="Smelltu til að skrá borðnúmer"
+                >
+                  <span className={`order-table ${b.table == null ? "order-table-empty" : ""}`}>
+                    {b.table == null ? "+ Borð" : `Borð ${b.table}`}
+                  </span>
+                  <span className="kitchen-count">
+                    {b.waiting < b.count ? `${b.waiting} af ${b.count}` : b.count}
+                  </span>
+                  <span className="order-timer" style={{ color: tone }}>
+                    {formatElapsed(age)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div className="btn-row btn-row-wrap">
           {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
             <button
@@ -902,6 +1001,11 @@ function ExpediterCounter() {
   // customInput shape: { title, placeholder, max?, onSubmit }
   const [resumePrompt, setResumePrompt] = useState(null);
   // resumePrompt shape: { parsed, savedAt, summary } | null
+  const [history, setHistory] = useState([]);
+  // history: [{ states, label }] — snapshots taken before each change, newest last
+  const statesRef = useRef(states);
+  statesRef.current = states;
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Helper: migrate stored states to current schema
   const migrateStates = (rawStates) => {
@@ -1045,17 +1149,70 @@ function ExpediterCounter() {
     })();
   }, [states, eventName, total, openCount, loaded]);
 
-  const updateCourse = (id, next) => {
+  const MAX_HISTORY = 100;
+  const pushHistory = (label) => {
+    const snapshot = { states: statesRef.current, label };
+    setHistory((h) => [...h.slice(-(MAX_HISTORY - 1)), snapshot]);
+  };
+
+  const updateCourse = (id, next, label) => {
+    const course = COURSES.find((c) => c.id === id);
+    pushHistory(`${label || "Breyting"} · ${course ? course.name : id}`);
     setStates((prev) => ({ ...prev, [id]: next }));
   };
 
+  const undo = () => {
+    if (history.length === 0) return;
+    const last = history[history.length - 1];
+    setStates(last.states);
+    setHistory(history.slice(0, -1));
+  };
+  const lastAction = history.length ? history[history.length - 1] : null;
+
   const resetAll = () => {
+    pushHistory("Reset allt");
     setStates({
       starter: initial(),
       main: initial(),
       dessert: initial(),
     });
     setConfirmResetAll(false);
+  };
+
+  // Fullscreen — hidden where unsupported (iPhone) or already running as an installed app
+  const fullscreenSupported =
+    typeof document !== "undefined" &&
+    !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+  const runningAsApp =
+    typeof window !== "undefined" &&
+    ((window.matchMedia && (
+      window.matchMedia("(display-mode: standalone)").matches ||
+      window.matchMedia("(display-mode: fullscreen)").matches
+    )) || window.navigator.standalone === true);
+
+  useEffect(() => {
+    const onChange = () => {
+      setIsFullscreen(!!(document.fullscreenElement || document.webkitFullscreenElement));
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    document.addEventListener("webkitfullscreenchange", onChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onChange);
+      document.removeEventListener("webkitfullscreenchange", onChange);
+    };
+  }, []);
+
+  const toggleFullscreen = () => {
+    try {
+      const el = document.documentElement;
+      let p;
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        p = document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen();
+      } else {
+        p = el.requestFullscreen ? el.requestFullscreen() : el.webkitRequestFullscreen();
+      }
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } catch (e) { /* ignore */ }
   };
 
   // Apply theme to <html> element and persist
@@ -1123,7 +1280,6 @@ function ExpediterCounter() {
           --course-main: #00539a;
           --course-dessert: #005d5d;
         }
-500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap');
 
         * { box-sizing: border-box; }
 
@@ -1133,8 +1289,8 @@ function ExpediterCounter() {
           background-image: none;
           color: var(--text-primary);
           font-family: 'IBM Plex Mono', monospace;
-          padding: 20px;
-          padding-bottom: 40px;
+          /* Keep clear of the notch / status bar when running as an installed app */
+          padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(40px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
         }
 
         .header {
@@ -1588,6 +1744,55 @@ function ExpediterCounter() {
           border-color: var(--interactive);
           transform: rotate(45deg);
         }
+        .icon-btn-static:hover {
+          transform: none;
+        }
+
+        .undo-btn {
+          background: transparent;
+          border: 1px solid var(--interactive);
+          color: var(--interactive);
+          font-family: 'IBM Plex Mono', monospace;
+          padding: 6px 14px;
+          min-height: 40px;
+          cursor: pointer;
+          display: inline-flex;
+          flex-direction: column;
+          align-items: flex-start;
+          justify-content: center;
+          gap: 2px;
+          max-width: 220px;
+          transition: all 0.15s;
+          -webkit-appearance: none;
+          appearance: none;
+          border-radius: 0;
+        }
+        .undo-btn:hover:not(:disabled),
+        .undo-btn:active:not(:disabled) {
+          background: var(--interactive);
+          color: #ffffff;
+        }
+        .undo-btn:disabled {
+          border-color: var(--border-strong);
+          color: var(--text-muted);
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        .undo-btn-title {
+          font-size: 12px;
+          font-weight: 800;
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
+        }
+        .undo-btn-label {
+          font-size: 10px;
+          letter-spacing: 0.05em;
+          opacity: 0.8;
+          max-width: 100%;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
 
         .modal-settings {
           border-top-color: var(--interactive);
@@ -1769,7 +1974,71 @@ function ExpediterCounter() {
           padding: 14px 12px;
           font-size: 14px;
           letter-spacing: 0.05em;
+        }
+
+        .order-tile {
+          flex: 1 1 auto;
+          min-width: 110px;
+          display: flex;
+          flex-direction: column;
+          border: 1px solid var(--accent);
           animation: batchPop 0.25s ease-out;
+        }
+        .order-tile .btn-call-batch {
+          border: none;
+        }
+        .order-meta,
+        .kitchen-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          background: var(--bg);
+          border: none;
+          color: var(--text-primary);
+          font-family: 'IBM Plex Mono', monospace;
+          padding: 8px 10px;
+          cursor: pointer;
+          -webkit-appearance: none;
+          appearance: none;
+          border-radius: 0;
+        }
+        .order-table {
+          font-size: 12px;
+          font-weight: 800;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+        }
+        .order-table-empty {
+          color: var(--text-muted);
+          font-weight: 600;
+        }
+        .order-timer {
+          font-size: 13px;
+          font-weight: 700;
+          letter-spacing: 0.05em;
+          font-variant-numeric: tabular-nums;
+        }
+
+        .kitchen-list {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .kitchen-row {
+          width: 100%;
+          border: 1px solid var(--layer-02);
+          border-left: 4px solid var(--text-muted);
+          padding: 10px 12px;
+        }
+        .kitchen-row .order-table {
+          flex: 1;
+          text-align: left;
+        }
+        .kitchen-count {
+          font-family: 'IBM Plex Sans Condensed', 'IBM Plex Sans', sans-serif;
+          font-size: 18px;
+          color: var(--text-secondary);
         }
         @keyframes batchPop {
           from { transform: scale(0.92); opacity: 0; }
@@ -1917,6 +2186,33 @@ function ExpediterCounter() {
             <div className="grand-total-label">Total Sent</div>
           </div>
           <button
+            className="undo-btn"
+            onClick={undo}
+            disabled={!lastAction}
+            title={lastAction ? `Afturkalla: ${lastAction.label}` : "Ekkert að afturkalla"}
+          >
+            <span className="undo-btn-title">↶ Afturkalla</span>
+            <span className="undo-btn-label">{lastAction ? lastAction.label : "—"}</span>
+          </button>
+          {fullscreenSupported && !runningAsApp && (
+            <button
+              className="icon-btn icon-btn-static"
+              onClick={toggleFullscreen}
+              title={isFullscreen ? "Hætta í fullum skjá" : "Fullur skjár"}
+              aria-label={isFullscreen ? "Hætta í fullum skjá" : "Fullur skjár"}
+            >
+              {isFullscreen ? (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3" />
+                </svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3" />
+                </svg>
+              )}
+            </button>
+          )}
+          <button
             className="icon-btn"
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
             title={theme === "dark" ? "Skipta í ljóst þema" : "Skipta í dökkt þema"}
@@ -1951,7 +2247,7 @@ function ExpediterCounter() {
             key={c.id}
             course={c}
             state={states[c.id]}
-            onChange={(next) => updateCourse(c.id, next)}
+            onChange={(next, label) => updateCourse(c.id, next, label)}
             total={total}
             openCount={openCount}
             onCustomInput={setCustomInput}
@@ -1974,10 +2270,16 @@ function ExpediterCounter() {
         title={customInput?.title || ""}
         placeholder={customInput?.placeholder || ""}
         max={customInput?.max}
+        quickPicks={customInput?.quickPicks}
+        initialValue={customInput?.initialValue}
         onSubmit={(n) => {
           customInput?.onSubmit(n);
           setCustomInput(null);
         }}
+        onClear={customInput?.onClear ? () => {
+          customInput.onClear();
+          setCustomInput(null);
+        } : null}
         onCancel={() => setCustomInput(null)}
       />
 
@@ -1996,7 +2298,7 @@ function ExpediterCounter() {
       <ConfirmDialog
         open={confirmResetAll}
         title="Núllstilla ALLA rétti?"
-        message="Þetta hreinsar allar talningar og tímamæla fyrir alla þrjá rétti. Ekki hægt að afturkalla."
+        message="Þetta hreinsar allar talningar og tímamæla fyrir alla þrjá rétti. Hægt er að afturkalla með ↶ Afturkalla takkanum."
         onConfirm={resetAll}
         onCancel={() => setConfirmResetAll(false)}
       />
