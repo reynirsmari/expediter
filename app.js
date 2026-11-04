@@ -1127,7 +1127,7 @@ function ExpediterCounter() {
     className: "grand-total-num"
   }, totalSent, !openCount && React.createElement("span", {
     style: {
-      color: "var(--border-strong)"
+      color: "var(--text-muted)"
     }
   }, " / ", totalExpected)), React.createElement("div", {
     className: "grand-total-label"

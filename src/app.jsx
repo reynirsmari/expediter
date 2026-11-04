@@ -1226,7 +1226,7 @@ function ExpediterCounter() {
             <div className="grand-total-num">
               {totalSent}
               {!openCount && (
-                <span style={{ color: "var(--border-strong)" }}> / {totalExpected}</span>
+                <span style={{ color: "var(--text-muted)" }}> / {totalExpected}</span>
               )}
             </div>
             <div className="grand-total-label">Total Sent</div>
