@@ -68,7 +68,7 @@ Allar talningar vistast í `localStorage` vafrans. Það þýðir:
 
 ## Workflow
 
-1. **Stage 1 — Miðar inn**: Þjónn kemur með pöntun. Þú smellir á **+** og slærð inn borðnúmer (má sleppa) og fjölda gesta á borðinu (eða velur 1–8). Hver pöntun birtist sem ný lína.
+1. **Stage 1 — Miðar inn**: Þjónn kemur með pöntun. Þú smellir á +1 til +8 eftir fjölda gesta og borðnúmers-glugginn opnast (má skilja eftir tóman). Fyrir stærri borð (9+) smellir þú á **+N** og slærð inn borðnúmer og fjölda gesta. Hver pöntun birtist sem ný lína.
 2. **Stage 2 — Kalla**: Hver óköllað pöntun hefur sinn eigin "Kalla N" takka. Þegar pöntun á að fara í eldhús, smellir þú á þann takka. Tími síðan síðasta kall birtist í toppnum á kortinu. Sá tímamælir stöðvast þegar allt sem hefur verið kallað er sent út og sýnir þá tímann frá síðasta kalli þar til síðustu diskar fóru út. Hann fer aftur af stað við næsta kall.
 3. **Stage 3 — Sent**: Þegar diskar fara út úr eldhúsi, smellir þú á +N (eða "Allt").
 
