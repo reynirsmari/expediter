@@ -1,9 +1,9 @@
 // Service worker: keeps the app working offline once installed.
-// The page itself is fetched from the network first, so a new version shows
-// up as soon as the app is opened with internet; the cached copy is only used
-// offline. Other files are served from the cache and refreshed in the background.
-// Bump CACHE when the list of files changes.
-const CACHE = "expediter-v3";
+// The app's own files are fetched from the network first, so a new version
+// shows up as soon as the app is opened with internet; cached copies are only
+// used offline. Fonts (other sites) are served from the cache and refreshed in
+// the background. Bump CACHE when the list of files changes.
+const CACHE = "expediter-v4";
 const ASSETS = [
   "./",
   "./index.html",
@@ -32,29 +32,33 @@ self.addEventListener("activate", (event) => {
 
 // Skip the browser's HTTP cache (GitHub Pages lets it keep files for 10 min)
 const fetchFresh = (req) => fetch(req, { cache: "no-cache" });
+const NETWORK_TIMEOUT_MS = 3000;
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
-  const isPage =
-    req.mode === "navigate" ||
-    (url.origin === self.location.origin && /\/(index\.html)?$/.test(url.pathname));
+  const isPage = req.mode === "navigate";
+  const isOwnFile = url.origin === self.location.origin;
 
-  if (isPage) {
-    // Network first, cached copy when offline
+  if (isPage || isOwnFile) {
+    // Network first; the cached copy when offline, or when the network takes
+    // longer than NETWORK_TIMEOUT_MS (weak restaurant Wi-Fi)
     event.respondWith(
-      caches.open(CACHE).then((cache) =>
-        fetchFresh(req)
-          .then((res) => {
-            if (res && res.ok) cache.put(req, res.clone());
-            return res;
-          })
-          .catch(() =>
-            cache.match(req, { ignoreSearch: true })
-              .then((cached) => cached || cache.match("./index.html"))
-          )
-      )
+      caches.open(CACHE).then((cache) => {
+        const cachedCopy = () =>
+          cache.match(req, { ignoreSearch: true })
+            .then((cached) => cached || (isPage ? cache.match("./index.html") : undefined));
+        const network = fetchFresh(req).then((res) => {
+          if (res && res.ok) cache.put(req, res.clone());
+          return res;
+        });
+        event.waitUntil(network.catch(() => {}));
+        const timeout = new Promise((resolve) =>
+          setTimeout(() => cachedCopy().then((c) => c && resolve(c)), NETWORK_TIMEOUT_MS)
+        );
+        return Promise.race([network.catch(cachedCopy), timeout]);
+      })
     );
     return;
   }

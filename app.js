@@ -5,6 +5,8 @@ const {
   useRef
 } = React;
 const DEFAULT_TOTAL = 110;
+const DEFAULT_EVENT_NAME = "ICELANDIC CULINARY TEAM";
+const OLD_DEFAULT_EVENT_NAME = "RON SERVICE COUNTER";
 const COURSES = [{
   id: "starter",
   name: "FORRÉTTUR",
@@ -873,7 +875,7 @@ function ExpediterCounter() {
     main: initial(),
     dessert: initial()
   });
-  const [eventName, setEventName] = useState("ICELANDIC CULINARY TEAM");
+  const [eventName, setEventName] = useState(DEFAULT_EVENT_NAME);
   const [loaded, setLoaded] = useState(false);
   const [confirmResetAll, setConfirmResetAll] = useState(false);
   const [total, setTotal] = useState(DEFAULT_TOTAL);
@@ -957,6 +959,7 @@ function ExpediterCounter() {
         return;
       }
       const parsed = JSON.parse(raw);
+      if (parsed.eventName === OLD_DEFAULT_EVENT_NAME) parsed.eventName = DEFAULT_EVENT_NAME;
       const states = parsed.states || {};
       const hasActivity = Object.values(states).some(s => {
         if (!s) return false;
