@@ -681,7 +681,7 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
   const [confirmReset, setConfirmReset] = useState(false);
   const [orderDialogOpen, setOrderDialogOpen] = useState(false);
   const hasLiveTimers =
-    (lastCallAt != null && !timerStopped) || pendingBatches.length > 0 || inKitchen.length > 0;
+    (lastCallAt != null && !timerStopped) || pendingBatches.length > 0;
   useEffect(() => {
     if (!hasLiveTimers) return;
     setNow(Date.now());
@@ -1059,7 +1059,8 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
         {inKitchen.length > 0 && (
           <div className="kitchen-list" aria-label="Pantanir í eldhúsi">
             {inKitchen.map((b) => {
-              const age = now - b.calledAt;
+              // Stopped when called: how long the order waited before being called
+              const age = b.calledAt - b.addedAt;
               const tone = timerToneFor(age);
               return (
                 <button
@@ -1075,7 +1076,12 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
                   <span className="kitchen-count">
                     {b.waiting < b.count ? `${b.waiting} af ${b.count}` : b.count}
                   </span>
-                  <span className="order-timer" style={{ color: tone }}>
+                  <span
+                    className="order-timer"
+                    style={{ color: tone }}
+                    title="Stöðvað — tími frá því miðinn kom inn þar til kallað var"
+                  >
+                    <span className="order-timer-stopped" aria-hidden="true">■</span>
                     {formatElapsed(age)}
                   </span>
                 </button>
@@ -2307,6 +2313,11 @@ function ExpediterCounter() {
         .kitchen-row .order-table {
           flex: 1;
           text-align: left;
+        }
+        .order-timer-stopped {
+          font-size: 9px;
+          margin-right: 5px;
+          vertical-align: 2px;
         }
         .kitchen-count {
           font-family: 'IBM Plex Sans Condensed', 'IBM Plex Sans', sans-serif;
