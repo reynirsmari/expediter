@@ -62,20 +62,19 @@ Allar talningar vistast í `localStorage` vafrans. Það þýðir:
 
 Þegar þú opnar appið í fyrsta sinn er hægt að:
 
-1. Stilla nafn efst (t.d. "RON SERVICE COUNTER")
+1. Stilla nafn efst (sjálfgefið "ICELANDIC CULINARY TEAM")
 2. Smella á tannhjóls-takkann → stilla heildarfjölda gesta (sjálfgefið 110) eða velja "Opin talning" án þaks
 3. Byrja að taka inn miða
 
 ## Workflow
 
-1. **Stage 1 — Miðar inn**: Þjónn kemur með pöntun. Þú smellir +1 til +8 (eða +N fyrir custom tölu). Hver smellur býr til nýja pöntun.
-2. **Stage 2 — Kalla**: Hver óköllað pöntun hefur sinn eigin "Kalla N" takka. Þegar pöntun á að fara í eldhús, smellir þú á þann takka. Tími síðan síðasta kall birtist í toppnum á kortinu.
+1. **Stage 1 — Miðar inn**: Þjónn kemur með pöntun. Þú smellir á **+** og slærð inn borðnúmer (má sleppa) og fjölda gesta á borðinu (eða velur 1–8). Hver pöntun birtist sem ný lína.
+2. **Stage 2 — Kalla**: Hver óköllað pöntun hefur sinn eigin "Kalla N" takka. Þegar pöntun á að fara í eldhús, smellir þú á þann takka. Tími síðan síðasta kall birtist í toppnum á kortinu. Sá tímamælir stöðvast þegar allt sem hefur verið kallað er sent út og sýnir þá tímann frá síðasta kalli þar til síðustu diskar fóru út. Hann fer aftur af stað við næsta kall.
 3. **Stage 3 — Sent**: Þegar diskar fara út úr eldhúsi, smellir þú á +N (eða "Allt").
 
 ### Pantanir: borð og tímamælir
 
 - Hver pöntun sýnir tímamæli: í stage 2 tímann síðan miðinn kom inn, og undir "Merkja sent" tímann síðan hún var kölluð. Grænt → gult eftir 4 mín → rautt eftir 8 mín.
-- Þegar ýtt er á +1 til +8 eða +N í "Miðar inn" opnast borðnúmers-glugginn sjálfkrafa. Sláðu inn númer, eða ýttu á Staðfesta / × til að hafa pöntunina án borðs.
 - Smelltu á "+ Borð" / "Borð N" á pöntun til að skrá, breyta eða fjarlægja borðnúmer síðar.
 - "×" á pöntun í stage 2 eyðir henni (t.d. ef ýtt var óvart á +1). Hægt að fá hana aftur með ↶ Afturkalla.
 - Allir gluggar sem hægt er að loka án þess að vista hafa "×" í efra hægra horni.

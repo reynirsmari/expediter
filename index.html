@@ -411,6 +411,106 @@ function NumberInputDialog({ open, title, placeholder, max, quickPicks: picks, i
   );
 }
 
+// New order: table number (optional) and how many guests are on the table
+function OrderDialog({ open, title, onSubmit, onCancel }) {
+  const [table, setTable] = useState("");
+  const [count, setCount] = useState("");
+  const tableRef = useRef(null);
+  const countRef = useRef(null);
+
+  useEffect(() => {
+    if (open) setTimeout(() => tableRef.current?.focus(), 50);
+  }, [open]);
+
+  if (!open) return null;
+
+  const parsedTable = parseInt(table, 10);
+  const parsedCount = parseInt(count, 10);
+  const tableValid =
+    table.trim() === "" || (Number.isFinite(parsedTable) && parsedTable > 0 && parsedTable <= 999);
+  const countValid = Number.isFinite(parsedCount) && parsedCount > 0 && parsedCount <= 999;
+  const isValid = tableValid && countValid;
+
+  const submit = () => {
+    if (!isValid) return;
+    onSubmit(parsedCount, table.trim() === "" ? null : parsedTable);
+  };
+
+  const onTableKey = (e) => {
+    if (e.key === "Enter") countRef.current?.focus();
+    if (e.key === "Escape") onCancel();
+  };
+  const onCountKey = (e) => {
+    if (e.key === "Enter") submit();
+    if (e.key === "Escape") onCancel();
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal modal-numinput" onClick={(e) => e.stopPropagation()}>
+        <CloseButton onClick={onCancel} />
+        <div className="modal-title">{title}</div>
+        <div className="order-fields">
+          <label className="order-field">
+            <span className="settings-label">Borð</span>
+            <input
+              ref={tableRef}
+              autoFocus
+              type="number"
+              inputMode="numeric"
+              className="num-input num-input-large"
+              placeholder="—"
+              value={table}
+              onChange={(e) => setTable(e.target.value)}
+              onKeyDown={onTableKey}
+              min={1}
+              max={999}
+            />
+          </label>
+          <label className="order-field">
+            <span className="settings-label">Fjöldi gesta</span>
+            <input
+              ref={countRef}
+              type="number"
+              inputMode="numeric"
+              className="num-input num-input-large"
+              placeholder="0"
+              value={count}
+              onChange={(e) => setCount(e.target.value)}
+              onKeyDown={onCountKey}
+              min={1}
+              max={999}
+            />
+          </label>
+        </div>
+        <div className="presets-row order-presets">
+          {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+            <button
+              key={n}
+              className={`preset-btn ${parsedCount === n ? "preset-active" : ""}`}
+              onClick={() => setCount(String(n))}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+        <div className="modal-actions">
+          <button className="btn btn-ghost modal-btn" onClick={onCancel}>
+            Hætta við
+          </button>
+          <button
+            className="btn modal-btn modal-btn-primary"
+            onClick={submit}
+            disabled={!isValid}
+          >
+            Staðfesta
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsDialog({ open, currentTotal, currentOpenCount, onSave, onCancel }) {
   const [draftTotal, setDraftTotal] = useState(String(currentTotal));
   const [draftOpen, setDraftOpen] = useState(currentOpenCount);
@@ -571,10 +671,17 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
     }
   }
 
+  // The course timer stops once everything called has been sent out,
+  // showing the time from the last call to the last plates going out
+  const lastSentAt = sentActions.length ? sentActions[sentActions.length - 1].at : null;
+  const timerStopped = lastCallAt != null && called > 0 && pendingSend <= 0;
+
   // Live timers: since last call, and per order
   const [now, setNow] = useState(Date.now());
   const [confirmReset, setConfirmReset] = useState(false);
-  const hasLiveTimers = lastCallAt != null || pendingBatches.length > 0 || inKitchen.length > 0;
+  const [orderDialogOpen, setOrderDialogOpen] = useState(false);
+  const hasLiveTimers =
+    (lastCallAt != null && !timerStopped) || pendingBatches.length > 0 || inKitchen.length > 0;
   useEffect(() => {
     if (!hasLiveTimers) return;
     setNow(Date.now());
@@ -582,24 +689,30 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
     return () => clearInterval(i);
   }, [hasLiveTimers]);
 
-  const sinceLastCall = lastCallAt ? now - lastCallAt : null;
+  const sinceLastCall = lastCallAt == null
+    ? null
+    : timerStopped
+      ? Math.max(lastSentAt ?? lastCallAt, lastCallAt) - lastCallAt
+      : now - lastCallAt;
 
   // Latest state, for dialog callbacks that run after the state has moved on
   // (e.g. the table dialog opened right after adding an order)
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  const addBatch = (count) => {
+  const addBatch = (count, table = null) => {
     if (count <= 0) return;
     const newBatch = {
       id: `b_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       count,
       addedAt: Date.now(),
       calledAt: null,
-      table: null,
+      table,
     };
-    onChange({ ...state, batches: [...batches, newBatch] }, `+${count} miðar`);
-    editTable(newBatch);
+    onChange(
+      { ...state, batches: [...batches, newBatch] },
+      table == null ? `+${count} miðar` : `Borð ${table} (+${count})`
+    );
   };
 
   const removeBatch = (batchId) => {
@@ -753,7 +866,7 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
     setConfirmReset(false);
   };
 
-  const timerTone = timerToneFor(sinceLastCall);
+  const timerTone = timerStopped ? "var(--text-secondary)" : timerToneFor(sinceLastCall);
 
   return (
     <div
@@ -767,9 +880,12 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
         <div
           className="timer-pill"
           style={{ color: timerTone, borderColor: timerTone }}
-          title="Tími síðan síðast kallað"
+          title={timerStopped ? "Stöðvað — allt sent út" : "Tími síðan síðast kallað"}
         >
-          <span className="timer-dot" style={{ background: timerTone }} />
+          <span
+            className={`timer-dot ${timerStopped ? "timer-dot-stopped" : ""}`}
+            style={{ background: timerTone }}
+          />
           {formatElapsed(sinceLastCall)}
         </div>
       </div>
@@ -825,27 +941,14 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
       {/* STAGE 1 — Tickets in */}
       <div className="stage">
         <div className="stage-label">1. Miðar inn</div>
-        <div className="btn-row btn-row-wrap">
-          {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
-            <button
-              key={n}
-              className="btn btn-add btn-num"
-              onClick={() => addBatch(n)}
-            >
-              +{n}
-            </button>
-          ))}
+        <div className="btn-row">
           <button
-            className="btn btn-add btn-custom"
-            onClick={() =>
-              onCustomInput({
-                title: `${course.name} — Miðar inn`,
-                placeholder: "Fjöldi miða",
-                onSubmit: (n) => addBatch(n),
-              })
-            }
+            className="btn btn-add btn-add-order"
+            onClick={() => setOrderDialogOpen(true)}
+            title="Nýtt borð"
+            aria-label="Nýtt borð"
           >
-            +N
+            +
           </button>
           <button
             className="btn btn-sub"
@@ -1022,6 +1125,17 @@ function CourseCard({ course, state, onChange, total, openCount, onCustomInput }
         </button>
       </div>
 
+      {/* Mounted only while open, so every new order starts with empty fields */}
+      {orderDialogOpen && <OrderDialog
+        open
+        title={`${course.name} — Nýtt borð`}
+        onSubmit={(count, table) => {
+          setOrderDialogOpen(false);
+          addBatch(count, table);
+        }}
+        onCancel={() => setOrderDialogOpen(false)}
+      />}
+
       <ConfirmDialog
         open={confirmReset}
         title={`Núllstilla ${course.name}?`}
@@ -1047,7 +1161,7 @@ function ExpediterCounter() {
     main: initial(),
     dessert: initial(),
   });
-  const [eventName, setEventName] = useState("RON SERVICE COUNTER");
+  const [eventName, setEventName] = useState("ICELANDIC CULINARY TEAM");
   const [loaded, setLoaded] = useState(false);
   const [confirmResetAll, setConfirmResetAll] = useState(false);
   const [total, setTotal] = useState(DEFAULT_TOTAL);
@@ -1491,6 +1605,10 @@ function ExpediterCounter() {
           border-radius: 50%;
           animation: pulse 1.5s infinite;
         }
+        .timer-dot-stopped {
+          animation: none;
+          border-radius: 1px;
+        }
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }
@@ -1634,6 +1752,29 @@ function ExpediterCounter() {
         .btn-add:hover:not(:disabled) {
           border-color: var(--accent);
           color: var(--accent);
+        }
+
+        .btn-add-order {
+          font-size: 32px;
+          line-height: 1;
+          padding: 14px;
+          min-height: 64px;
+          border-color: var(--accent);
+          color: var(--accent);
+        }
+        .order-fields {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+        }
+        .order-field .settings-label {
+          margin-bottom: 6px;
+        }
+        .order-field .num-input-large {
+          margin-bottom: 10px;
+        }
+        .order-presets {
+          margin-bottom: 20px;
         }
 
         .btn-sub {
