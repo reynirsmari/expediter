@@ -3,13 +3,13 @@
 // up as soon as the app is opened with internet; the cached copy is only used
 // offline. Other files are served from the cache and refreshed in the background.
 // Bump CACHE when the list of files changes.
-const CACHE = "expediter-v2";
+const CACHE = "expediter-v3";
 const ASSETS = [
   "./",
   "./index.html",
   "./react.min.js",
   "./react-dom.min.js",
-  "./babel.min.js",
+  "./app.js",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

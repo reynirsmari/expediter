@@ -4,12 +4,14 @@ Talningar-app fyrir expediter á veitingahúsum. Virkar fullkomlega offline.
 
 ## Möppu-innihald
 
-- `index.html` — Aðalskráin (inniheldur appkóðann inline)
+- `index.html` — Aðalskráin (útlit og ræsing)
+- `app.js` — Appkóðinn, þýddur úr `src/app.jsx` (ekki breyta beint)
 - `react.min.js`, `react-dom.min.js` — React 18
-- `babel.min.js` — Þýðir JSX í vafranum
+- `src/app.jsx` — Frumkóði appsins
+- `build.js`, `tools/babel.min.js` — Þýða `src/app.jsx` yfir í `app.js` (`node build.js`). Babel er ekki lengur hlaðið í vafranum, sem gerir ræsingu mun hraðari.
 - `manifest.webmanifest`, `sw.js`, `*.png` — Gera appið uppsetjanlegt (fullur skjár, virkar offline)
 
-**Allar þrjár JS skrárnar þurfa að vera í sömu möppu og `index.html`.**
+**`app.js`, `react.min.js` og `react-dom.min.js` þurfa að vera í sömu möppu og `index.html`.**
 
 ## Uppsetning sem app (mælt með)
 
@@ -84,6 +86,5 @@ Bæði stage 2 og 3 hafa "↶ Bakka" takka neðst ef þú smellir óvart.
 
 ## Vandamál?
 
-- **Hvít síða**: Bíddu 1-2 sek. eftir að Babel þýði JSX. Ef ekki, opnaðu vafra-konsólann.
+- **Hvít síða**: Opnaðu vafra-konsólann og athugaðu að `app.js` sé í sömu möppu og `index.html`.
 - **Talningar hverfa**: Tókstu eftir að það birtist resume-modal? Ef þú smelltir á "Byrja upp á nýtt", þá er það fyrir.
-- **Babel hættir að virka**: Athugaðu að allar 3 JS skrárnar séu í sömu möppu og index.html.
